@@ -41,12 +41,23 @@ Install the latest release:
 curl -fsSL https://github.com/D1376/llmpk/releases/latest/download/install.sh | bash
 ```
 
-This installs the prebuilt binary for macOS Apple Silicon, macOS Intel, or Linux
-x86_64. To install somewhere specific:
+This installs the prebuilt binary for macOS Apple Silicon or Linux x86_64. To
+install somewhere specific:
 
 ```sh
 curl -fsSL https://github.com/D1376/llmpk/releases/latest/download/install.sh | env LLMPK_INSTALL_DIR="$HOME/.local/bin" bash
 ```
+
+## Uninstall
+
+Remove the installed binary:
+
+```sh
+rm -f "$HOME/.local/bin/llmpk"
+rm -f /usr/local/bin/llmpk
+```
+
+If you installed to a custom directory, remove `llmpk` from that directory.
 
 ## Build From Source
 
@@ -146,19 +157,6 @@ Live fetch tests are also opt-in:
 ```sh
 LLMPK_LIVE=1 cargo test live_fetch
 ```
-
-## Release
-
-Create and push a version tag to publish a GitHub release:
-
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The release workflow builds macOS Intel, macOS Apple Silicon, and Linux x86_64
-tarballs, uploads SHA-256 checksums, and attaches `install.sh` for the one-line
-installer.
 
 ## Project Layout
 

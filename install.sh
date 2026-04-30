@@ -48,8 +48,11 @@ target_triple() {
   esac
 
   case "${arch}-${os}" in
-    x86_64-unknown-linux-gnu | x86_64-apple-darwin | aarch64-apple-darwin)
+    x86_64-unknown-linux-gnu | aarch64-apple-darwin)
       printf '%s-%s' "$arch" "$os"
+      ;;
+    x86_64-apple-darwin)
+      fail "macOS Intel release binaries are not published yet; install from source with cargo install --git https://github.com/${repo}.git"
       ;;
     aarch64-unknown-linux-gnu)
       fail "Linux arm64 release binaries are not published yet; install from source with cargo install --git https://github.com/${repo}.git"
