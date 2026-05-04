@@ -1,0 +1,308 @@
+use std::sync::LazyLock;
+use std::time::Duration;
+
+use anyhow::{anyhow, Context, Result};
+use regex::Regex;
+use reqwest::blocking::Client;
+
+const UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+                  AppleWebKit/537.36 (KHTML, like Gecko) \
+                  Chrome/124.0.0.0 Safari/537.36";
+
+static CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .user_agent(UA)
+        .timeout(Duration::from_secs(20))
+        .build()
+        .expect("building reqwest client")
+});
+
+pub fn fetch_html(url: &str) -> Result<String> {
+    CLIENT
+        .get(url)
+        .send()
+        .with_context(|| format!("requesting {url}"))?
+        .error_for_status()
+        .with_context(|| format!("non-2xx from {url}"))?
+        .text()
+        .context("reading response body")
+}
+
+static RSC_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"self\.__next_f\.push\(\[1,"((?:\\.|[^"\\])*)"\]\)"#).expect("compiling RSC regex")
+});
+
+pub fn extract_stream(html: &str) -> Result<String> {
+    let mut joined = String::new();
+    for cap in RSC_RE.captures_iter(html) {
+        decode_into(&cap[1], &mut joined);
+    }
+    if joined.is_empty() {
+        return Err(anyhow!("no __next_f.push chunks in HTML"));
+    }
+    Ok(joined)
+}
+
+fn decode_into(src: &str, out: &mut String) {
+    let mut chars = src.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('"') => out.push('"'),
+            Some('\'') => out.push('\''),
+            Some('\\') => out.push('\\'),
+            Some('/') => out.push('/'),
+            Some('b') => out.push('\u{0008}'),
+            Some('f') => out.push('\u{000c}'),
+            Some('u') => {
+                let hex: String = chars.by_ref().take(4).collect();
+                if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                    if let Some(ch) = char::from_u32(n) {
+                        out.push(ch);
+                        continue;
+                    }
+                }
+                out.push('\u{FFFD}');
+            }
+            Some(other) => out.push(other),
+            None => break,
+        }
+    }
+}
+
+/// Return the smallest balanced `{...}` substrings that contain `needle`.
+pub fn innermost_objects_with<'a>(stream: &'a str, needle: &str) -> Vec<&'a str> {
+    let bytes = stream.as_bytes();
+    let mut starts: Vec<usize> = Vec::new();
+    let mut closed: Vec<(usize, usize)> = Vec::new();
+    let mut in_str = false;
+    let mut escape = false;
+
+    for (i, &b) in bytes.iter().enumerate() {
+        if in_str {
+            if escape {
+                escape = false;
+            } else if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' => starts.push(i),
+            b'}' => {
+                if let Some(s) = starts.pop() {
+                    closed.push((s, i));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut matches: Vec<(usize, usize)> = closed
+        .into_iter()
+        .filter(|(s, e)| stream[*s..=*e].contains(needle))
+        .collect();
+    matches.sort_by_key(|(s, e)| e - s);
+
+    let mut chosen: Vec<(usize, usize)> = Vec::new();
+    for (s, e) in matches {
+        if chosen.iter().any(|(cs, ce)| *cs >= s && *ce <= e) {
+            continue;
+        }
+        chosen.push((s, e));
+    }
+    chosen.sort_by_key(|(s, _)| *s);
+    chosen.iter().map(|(s, e)| &stream[*s..=*e]).collect()
+}
+
+/// Fetch HTML using a fresh client per call (old behavior).
+#[cfg(test)]
+pub fn fetch_html_new_client(url: &str) -> Result<String> {
+    Client::builder()
+        .user_agent(UA)
+        .timeout(Duration::from_secs(20))
+        .build()?
+        .get(url)
+        .send()
+        .with_context(|| format!("requesting {url}"))?
+        .error_for_status()
+        .with_context(|| format!("non-2xx from {url}"))?
+        .text()
+        .context("reading response body")
+}
+
+/// Find the first balanced `[...]` array following the literal `"<key>":` in the stream.
+pub fn first_array_after<'a>(stream: &'a str, key: &str) -> Option<&'a str> {
+    let needle = format!("\"{key}\":");
+    let i = stream.find(&needle)?;
+    let bytes = stream.as_bytes();
+    // Locate the opening `[` after the colon.
+    let mut start = i + needle.len();
+    while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    if start >= bytes.len() || bytes[start] != b'[' {
+        return None;
+    }
+
+    let mut depth: i32 = 0;
+    let mut in_str = false;
+    let mut escape = false;
+    for (j, &b) in bytes.iter().enumerate().skip(start) {
+        if in_str {
+            if escape {
+                escape = false;
+            } else if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&stream[start..=j]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const AA_URL: &str = "https://artificialanalysis.ai/";
+    const ARENA_URL: &str = "https://arena.ai/leaderboard/text";
+
+    /// Benchmark: fresh client per request (old) vs shared client (new).
+    /// Run with: LLMPK_BENCH=1 cargo test bench_fetch -- --nocapture
+    #[test]
+    fn bench_fetch() {
+        if std::env::var("LLMPK_BENCH").is_err() {
+            return;
+        }
+
+        let urls = [AA_URL, ARENA_URL];
+        let rounds = 3;
+
+        println!("\n=== Fetch Benchmark ({rounds} rounds per URL) ===\n");
+
+        for url in &urls {
+            // Warm up the shared client
+            let _ = fetch_html(url);
+
+            // --- Shared client (new) ---
+            let mut shared_times = Vec::new();
+            for _ in 0..rounds {
+                let t = std::time::Instant::now();
+                let _ = fetch_html(url);
+                shared_times.push(t.elapsed());
+            }
+
+            // --- Fresh client per request (old) ---
+            let mut fresh_times = Vec::new();
+            for _ in 0..rounds {
+                let t = std::time::Instant::now();
+                let _ = fetch_html_new_client(url);
+                fresh_times.push(t.elapsed());
+            }
+
+            let shared_avg: Duration =
+                shared_times.iter().sum::<Duration>() / rounds;
+            let fresh_avg: Duration =
+                fresh_times.iter().sum::<Duration>() / rounds;
+            let speedup = fresh_avg.as_secs_f64() / shared_avg.as_secs_f64();
+
+            println!("URL: {url}");
+            println!("  Fresh client : {fresh_times:?}  avg={fresh_avg:.0?}");
+            println!("  Shared client: {shared_times:?}  avg={shared_avg:.0?}");
+            println!("  Speedup      : {speedup:.2}x");
+            println!();
+        }
+    }
+
+    /// Benchmark: regex compiled per call (old) vs static regex (new).
+    /// Run with: LLMPK_BENCH=1 cargo test bench_regex -- --nocapture
+    #[test]
+    fn bench_regex() {
+        if std::env::var("LLMPK_BENCH").is_err() {
+            return;
+        }
+
+        let html = match std::env::var("LLMPK_HOMEPAGE_FIXTURE") {
+            Ok(path) => std::fs::read_to_string(&path).expect("fixture read"),
+            Err(_) => {
+                println!("skipping bench_regex (set LLMPK_HOMEPAGE_FIXTURE)");
+                return;
+            }
+        };
+
+        let rounds = 10;
+
+        // Static regex (new)
+        let mut static_times = Vec::new();
+        for _ in 0..rounds {
+            let t = std::time::Instant::now();
+            let _ = extract_stream(&html);
+            static_times.push(t.elapsed());
+        }
+
+        // Regex compiled per call (old)
+        let re = Regex::new(r#"self\.__next_f\.push\(\[1,"((?:\\.|[^"\\])*)"\]\)"#).unwrap();
+        let mut compiled_times = Vec::new();
+        for _ in 0..rounds {
+            let t = std::time::Instant::now();
+            let mut joined = String::new();
+            for cap in re.captures_iter(&html) {
+                decode_into(&cap[1], &mut joined);
+            }
+            let _ = joined;
+            compiled_times.push(t.elapsed());
+        }
+
+        // Regex recompiled per call (old)
+        let mut recompile_times = Vec::new();
+        for _ in 0..rounds {
+            let re = Regex::new(r#"self\.__next_f\.push\(\[1,"((?:\\.|[^"\\])*)"\]\)"#).unwrap();
+            let t = std::time::Instant::now();
+            let mut joined = String::new();
+            for cap in re.captures_iter(&html) {
+                decode_into(&cap[1], &mut joined);
+            }
+            let _ = joined;
+            recompile_times.push(t.elapsed());
+        }
+
+        let static_avg: Duration =
+            static_times.iter().sum::<Duration>() / rounds;
+        let compiled_avg: Duration =
+            compiled_times.iter().sum::<Duration>() / rounds;
+        let recompile_avg: Duration =
+            recompile_times.iter().sum::<Duration>() / rounds;
+
+        println!("\n=== Regex Benchmark ({rounds} rounds) ===\n");
+        println!("  Recompile each call: {recompile_times:?}  avg={recompile_avg:.0?}");
+        println!("  Pre-compiled       : {compiled_times:?}  avg={compiled_avg:.0?}");
+        println!("  Static (LazyLock)  : {static_times:?}  avg={static_avg:.0?}");
+        println!(
+            "  Compile overhead   : {:.2}x vs static",
+            recompile_avg.as_secs_f64() / static_avg.as_secs_f64()
+        );
+    }
+}
