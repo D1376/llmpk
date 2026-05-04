@@ -2,7 +2,7 @@
 
 A terminal TUI that aggregates LLM and AI-model leaderboards from multiple sources into a single, navigable interface.
 
-> **Note:** This is a personal vibe coding project. Built for my own use to quickly compare LLM models across leaderboards without opening a browser. Expect rough edges.
+> **Note:** This is a personal vibe coding project using [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Built for my own use to quickly compare LLM models across leaderboards without opening a browser. Expect rough edges.
 
 No API keys. No headless browser. No JavaScript runtime. Just HTTP and regex.
 
