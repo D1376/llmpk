@@ -108,7 +108,10 @@ fn handle_key(k: KeyEvent, app: &mut AppState, tx: &mpsc::Sender<Msg>) -> bool {
     }
     if app.is_help_open() {
         match k.code {
-            KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => app.close_help(),
+            KeyCode::Char('?')
+            | KeyCode::Char('h')
+            | KeyCode::Esc
+            | KeyCode::Char('q') => app.close_help(),
             _ => {}
         }
         return false;
@@ -124,7 +127,7 @@ fn handle_key(k: KeyEvent, app: &mut AppState, tx: &mpsc::Sender<Msg>) -> bool {
 
     match k.code {
         KeyCode::Char('q') | KeyCode::Esc => return true,
-        KeyCode::Char('?') => app.toggle_help(),
+        KeyCode::Char('?') | KeyCode::Char('h') => app.toggle_help(),
         KeyCode::Char('r') => {
             let b = app.current_board();
             app.set_status(b, Status::Loading);

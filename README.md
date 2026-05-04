@@ -63,7 +63,7 @@ Requires Rust 1.70+.
 | `1`–`9`, `0`, `-` | Jump to board 1–11 |
 | `r` | Reload current board |
 | `↑` / `↓` (or `k` / `j`) | Move selected row |
-| `?` | Toggle keybindings help |
+| `?` or `h` | Toggle in-app help (lists every keybinding and explains each metric) |
 
 ### Sorting
 

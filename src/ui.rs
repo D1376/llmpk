@@ -447,38 +447,58 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
 }
 
 fn render_help_overlay(frame: &mut Frame, area: Rect) {
-    let popup = centered_rect(area, 70, 22);
+    let popup = centered_rect(area, 82, 36);
     frame.render_widget(ratatui::widgets::Clear, popup);
 
     let dim = Style::default().fg(Color::DarkGray);
     let head = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
     let lines = vec![
+        Line::styled("Boards", head),
+        help_row(
+            "AA",
+            "artificialanalysis.ai composite ranking of LLMs",
+        ),
+        help_row(
+            "Arena",
+            "arena.ai community-vote leaderboards (10 modalities)",
+        ),
+        Line::from(""),
         Line::styled("Navigation", head),
-        help_row("q  Esc  Ctrl-C", "Quit"),
-        help_row("?", "Toggle this help"),
-        help_row("[   ]", "Previous / next board"),
-        help_row("1-9  0  -", "Jump to board 1-11"),
-        help_row("r", "Reload current board"),
-        help_row("↑  ↓  k  j", "Move selected row"),
+        help_row("q  Esc  Ctrl-C", "Quit llmpk"),
+        help_row("?  h", "Toggle this help overlay"),
+        help_row("[   ]", "Previous / next board (cycles)"),
+        help_row("1-9  0  -", "Jump directly to board 1-11"),
+        help_row("r", "Reload the current board (refetch from source)"),
+        help_row("↑  ↓  k  j", "Move the highlighted row"),
         Line::from(""),
         Line::styled("View & sort", head),
         help_row("m", "Toggle table / chart view"),
-        help_row("o", "Toggle sort direction (asc/desc)"),
-        help_row("i  s  p  c", "AA sort: intel / speed / price / context"),
-        help_row("n  i  v  p  c", "Arena sort: rank / rating / votes / price / context"),
+        help_row("o", "Reverse current sort direction (asc <-> desc)"),
+        Line::styled("  AA sort keys", dim),
+        help_row("i", "Intelligence Index — composite quality score"),
+        help_row("s", "Output Speed — tokens generated per second"),
+        help_row("p", "Blended Price — USD per 1M input+output tokens"),
+        help_row("c", "Context Window — max tokens the model accepts"),
+        Line::styled("  Arena sort keys", dim),
+        help_row("n", "Rank — leaderboard position (1 = best)"),
+        help_row("i", "Rating — ELO-style score from head-to-head votes"),
+        help_row("v", "Votes — number of human comparisons collected"),
+        help_row("p", "Price — $/M tokens, $/image, or $/sec (board-dependent)"),
+        help_row("c", "Context Window — max tokens the model accepts"),
         Line::from(""),
         Line::styled("Filter", head),
-        help_row("/", "Edit filter for current board"),
-        help_row("Ctrl-U", "Clear filter"),
-        help_row("Backspace", "Delete a character (while editing)"),
-        help_row("Enter  Esc", "Finish editing"),
+        help_row("/", "Begin editing a substring filter for the current board"),
+        help_row("type", "Narrows visible rows in real time"),
+        help_row("Backspace", "Delete a character while editing"),
+        help_row("Ctrl-U", "Clear the filter"),
+        help_row("Enter  Esc", "Finish editing (filter stays applied)"),
         Line::from(""),
-        Line::styled("Press ? or Esc to close", dim),
+        Line::styled("Press ?, h, or Esc to close", dim),
     ];
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Keybindings ")
+        .title(" Keybindings & metrics ")
         .style(Style::default().fg(Color::Gray));
     let p = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
     frame.render_widget(p, popup);
@@ -1737,8 +1757,8 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &AppState) {
     }
 
     let nav = vec![
-        key("?"),
-        text(" keybindings  "),
+        key("? / h"),
+        text(" help & keybindings  "),
         key("q"),
         text(" quit  "),
         key("[ ]"),
