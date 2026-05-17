@@ -30,6 +30,7 @@ No API keys. No headless browser. No JavaScript runtime. Just HTTP and regex.
 - **Lazy fetching** — boards load on first visit, cached for the session
 - **Neighbor prefetching** — adjacent boards load in the background after the current one finishes
 - **Table and chart views** — toggle with `m`
+- **AA Agents radar panel** — wide terminals show a top-5 multi-metric comparison beside the coding-agents table
 - **Per-board filtering** — type `/` to filter, `Ctrl-U` to clear
 - **Responsive layout** — adapts columns and detail pane to terminal size
 - **Sorting** — by any metric, ascending or descending
