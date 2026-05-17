@@ -26,7 +26,7 @@ No API keys. No headless browser. No JavaScript runtime. Just HTTP and regex.
 
 ## Features
 
-- **11 leaderboard boards** — Artificial Analysis (intelligence, speed, price, context) and Arena (text, search, vision, document, code, text-to-image, image-edit, text-to-video, image-to-video, video-edit)
+- **12 leaderboard boards** — Artificial Analysis models, Artificial Analysis coding agents, and Arena (text, search, vision, document, code, text-to-image, image-edit, text-to-video, image-to-video, video-edit)
 - **Lazy fetching** — boards load on first visit, cached for the session
 - **Neighbor prefetching** — adjacent boards load in the background after the current one finishes
 - **Table and chart views** — toggle with `m`
@@ -60,22 +60,25 @@ Requires Rust 1.70+.
 |-----|--------|
 | `q`, `Esc`, `Ctrl-C` | Quit |
 | `[` / `]` | Previous / next board |
-| `1`–`9`, `0`, `-` | Jump to board 1–11 |
+| `1`–`9`, `0`, `-`, `=` | Jump to board 1–12 |
 | `r` | Reload current board |
 | `↑` / `↓` (or `k` / `j`) | Move selected row |
 | `?` or `h` | Toggle in-app help (lists every keybinding and explains each metric) |
 
 ### Sorting
 
-| Key | AA | Arena |
-|-----|----|-------|
-| `i` | Intelligence | Rating |
-| `s` | Speed | — |
-| `p` | Price | Price |
-| `c` | Context | Context |
-| `n` | — | Rank |
-| `v` | — | Votes |
-| `o` | Toggle sort direction | Toggle sort direction |
+| Key | AA | AA Agents | Arena |
+|-----|----|-----------|-------|
+| `i` | Intelligence | Index | Rating |
+| `a` | — | Pass@1 | — |
+| `s` | Speed | Turns | — |
+| `p` | Price | Cost | Price |
+| `t` | — | Time | — |
+| `u` | — | Tokens | — |
+| `c` | Context | — | Context |
+| `n` | — | — | Rank |
+| `v` | — | — | Votes |
+| `o` | Toggle sort direction | Toggle sort direction | Toggle sort direction |
 
 ### View and filter
 
@@ -92,6 +95,7 @@ Requires Rust 1.70+.
 | Board | Source | Metrics |
 |-------|--------|---------|
 | AA | [artificialanalysis.ai](https://artificialanalysis.ai/) | Intelligence index, output speed (t/s), blended price ($/M tokens), context window |
+| AA Agents | [artificialanalysis.ai/agents/coding-agents](https://artificialanalysis.ai/agents/coding-agents) | Coding Agent Index, Pass@1, mean cost, mean execution time, mean tokens, mean turns |
 | Arena Text | [arena.ai/leaderboard/text](https://arena.ai/leaderboard/text) | ELO rating, votes, input/output price ($/M tokens), context length |
 | Arena Search | [arena.ai/leaderboard/search](https://arena.ai/leaderboard/search) | ELO rating, votes |
 | Arena Vision | [arena.ai/leaderboard/vision](https://arena.ai/leaderboard/vision) | ELO rating, votes |
@@ -132,6 +136,7 @@ Fixture and live tests are gated behind environment variables:
 # Fixture-based tests
 LLMPK_HOMEPAGE_FIXTURE=path/to/aa.html cargo test
 LLMPK_ARENA_FIXTURE_DIR=path/to/arena_fixtures cargo test
+LLMPK_CODING_AGENTS_FIXTURE=path/to/coding-agents.html cargo test
 
 # Live network tests
 LLMPK_LIVE=1 cargo test live_fetch
@@ -147,6 +152,7 @@ src/
   main.rs    Entry point, terminal setup/teardown, event loop, fetch dispatch
   rsc.rs     HTTP client, RSC stream extraction, brace/bracket scanners
   aa.rs      artificialanalysis.ai parser
+  coding_agents.rs artificialanalysis.ai coding agents parser
   arena.rs   arena.ai parser, slug enum, entry struct
   board.rs   Board enum, Data/Status wrappers, fetch dispatch
   ui.rs      Tabs, table/chart rendering, sort state, key handling

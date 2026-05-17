@@ -84,6 +84,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn live_fetch_when_enabled() {
+        if std::env::var("LLMPK_LIVE").is_err() {
+            return;
+        }
+        let models = fetch().expect("live artificialanalysis fetch");
+        assert!(models.len() > 10);
+    }
+
+    #[test]
     fn parses_fixture_when_provided() {
         let Ok(path) = std::env::var("LLMPK_HOMEPAGE_FIXTURE") else {
             return;

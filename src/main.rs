@@ -1,6 +1,7 @@
 mod aa;
 mod arena;
 mod board;
+mod coding_agents;
 mod rsc;
 mod ui;
 
@@ -147,7 +148,7 @@ fn handle_key(k: KeyEvent, app: &mut AppState, tx: &mpsc::Sender<Msg>) -> bool {
         KeyCode::Char('/') => app.begin_filter(),
         KeyCode::Down | KeyCode::Char('j') => app.move_down(),
         KeyCode::Up | KeyCode::Char('k') => app.move_up(),
-        KeyCode::Char(c @ ('1'..='9' | '0' | '-')) => {
+        KeyCode::Char(c @ ('1'..='9' | '0' | '-' | '=')) => {
             if let Some(idx) = board_idx_from_char(c, app) {
                 app.select_board(idx);
                 ensure_loaded(app, tx);
@@ -177,6 +178,7 @@ fn board_idx_from_char(c: char, app: &AppState) -> Option<usize> {
         '1'..='9' => (c as u8 - b'1') as usize,
         '0' => 9,
         '-' => 10,
+        '=' => 11,
         _ => return None,
     };
     if idx < app.boards.len() {

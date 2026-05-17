@@ -15,6 +15,7 @@ use ratatui::{
 use crate::aa;
 use crate::arena;
 use crate::board::{Board, Data, Status};
+use crate::coding_agents;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortDir {
@@ -55,6 +56,16 @@ pub enum ArenaKey {
     Context,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentKey {
+    Index,
+    Pass,
+    Cost,
+    Time,
+    Tokens,
+    Turns,
+}
+
 #[derive(Debug, Clone)]
 pub struct AaSort {
     pub key: AaKey,
@@ -64,6 +75,12 @@ pub struct AaSort {
 #[derive(Debug, Clone)]
 pub struct ArenaSort {
     pub key: ArenaKey,
+    pub dir: SortDir,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentSort {
+    pub key: AgentKey,
     pub dir: SortDir,
 }
 
@@ -84,6 +101,7 @@ pub struct AppState {
     pub help_open: bool,
     pub aa_sort: AaSort,
     pub arena_sort: ArenaSort,
+    pub agent_sort: AgentSort,
 }
 
 impl AppState {
@@ -105,6 +123,10 @@ impl AppState {
             arena_sort: ArenaSort {
                 key: ArenaKey::Rank,
                 dir: SortDir::Asc,
+            },
+            agent_sort: AgentSort {
+                key: AgentKey::Index,
+                dir: SortDir::Desc,
             },
         }
     }
@@ -193,6 +215,7 @@ impl AppState {
         let query = self.filter_query(board);
         match self.status.get(&board) {
             Some(Status::Loaded(Data::Aa(v))) => count_matching_aa(v, query),
+            Some(Status::Loaded(Data::AaAgents(v))) => count_matching_agents(v, query),
             Some(Status::Loaded(Data::Arena(v))) => count_matching_arena(v, query),
             _ => 0,
         }
@@ -301,6 +324,32 @@ impl AppState {
                     }
                 }
             }
+            Board::AaAgents => {
+                let new_key = match key {
+                    'i' => Some(AgentKey::Index),
+                    'a' => Some(AgentKey::Pass),
+                    'p' => Some(AgentKey::Cost),
+                    't' => Some(AgentKey::Time),
+                    'u' => Some(AgentKey::Tokens),
+                    's' => Some(AgentKey::Turns),
+                    _ => None,
+                };
+                if let Some(k) = new_key {
+                    if self.agent_sort.key == k {
+                        self.agent_sort.dir = self.agent_sort.dir.toggle();
+                    } else {
+                        self.agent_sort.key = k;
+                        self.agent_sort.dir = if matches!(
+                            k,
+                            AgentKey::Cost | AgentKey::Time | AgentKey::Tokens | AgentKey::Turns
+                        ) {
+                            SortDir::Asc
+                        } else {
+                            SortDir::Desc
+                        };
+                    }
+                }
+            }
             Board::Arena(_) => {
                 let new_key = match key {
                     'k' | 'n' => Some(ArenaKey::Rank),
@@ -330,6 +379,7 @@ impl AppState {
     pub fn toggle_dir(&mut self) {
         match self.current_board() {
             Board::Aa => self.aa_sort.dir = self.aa_sort.dir.toggle(),
+            Board::AaAgents => self.agent_sort.dir = self.agent_sort.dir.toggle(),
             Board::Arena(_) => self.arena_sort.dir = self.arena_sort.dir.toggle(),
         }
         self.resort_current();
@@ -341,7 +391,8 @@ impl AppState {
             let mut taken = std::mem::replace(data, Data::Aa(Vec::new()));
             let aa = self.aa_sort.clone();
             let arena = self.arena_sort.clone();
-            sort_with(&mut taken, &aa, &arena);
+            let agents = self.agent_sort.clone();
+            sort_with(&mut taken, &aa, &arena, &agents);
             *data = taken;
         }
         let has_rows = self.row_count(board) > 0;
@@ -351,13 +402,14 @@ impl AppState {
     }
 
     fn sort_data(&self, data: &mut Data) {
-        sort_with(data, &self.aa_sort, &self.arena_sort);
+        sort_with(data, &self.aa_sort, &self.arena_sort, &self.agent_sort);
     }
 }
 
-fn sort_with(data: &mut Data, aa_sort: &AaSort, arena_sort: &ArenaSort) {
+fn sort_with(data: &mut Data, aa_sort: &AaSort, arena_sort: &ArenaSort, agent_sort: &AgentSort) {
     match data {
         Data::Aa(models) => sort_aa(models, aa_sort),
+        Data::AaAgents(rows) => sort_agents(rows, agent_sort),
         Data::Arena(entries) => sort_arena(entries, arena_sort),
     }
 }
@@ -378,6 +430,27 @@ fn aa_metric(m: &aa::Model, key: AaKey) -> Option<f64> {
         AaKey::Speed => m.speed(),
         AaKey::Price => m.price_1m_blended_3_to_1,
         AaKey::Context => m.context_window_tokens.map(|x| x as f64),
+    }
+}
+
+fn sort_agents(rows: &mut [coding_agents::AgentRow], sort: &AgentSort) {
+    let key = sort.key;
+    let dir = sort.dir;
+    rows.sort_by(|a, b| {
+        let av = agent_metric(a, key);
+        let bv = agent_metric(b, key);
+        cmp_opt_for_dir(av, bv, dir)
+    });
+}
+
+fn agent_metric(row: &coding_agents::AgentRow, key: AgentKey) -> Option<f64> {
+    match key {
+        AgentKey::Index => row.index_score,
+        AgentKey::Pass => row.mean.reward,
+        AgentKey::Cost => row.mean.cost_usd,
+        AgentKey::Time => row.mean.agent_wall_time_sec,
+        AgentKey::Tokens => row.mean.total_tokens,
+        AgentKey::Turns => row.mean.steps,
     }
 }
 
@@ -447,16 +520,19 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
 }
 
 fn render_help_overlay(frame: &mut Frame, area: Rect) {
-    let popup = centered_rect(area, 82, 36);
+    let popup = centered_rect(area, 82, 42);
     frame.render_widget(ratatui::widgets::Clear, popup);
 
     let dim = Style::default().fg(Color::DarkGray);
-    let head = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let head = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
     let lines = vec![
         Line::styled("Boards", head),
+        help_row("AA", "artificialanalysis.ai composite ranking of LLMs"),
         help_row(
-            "AA",
-            "artificialanalysis.ai composite ranking of LLMs",
+            "AA Agents",
+            "artificialanalysis.ai coding-agent benchmark index",
         ),
         help_row(
             "Arena",
@@ -467,7 +543,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         help_row("q  Esc  Ctrl-C", "Quit llmpk"),
         help_row("?  h", "Toggle this help overlay"),
         help_row("[   ]", "Previous / next board (cycles)"),
-        help_row("1-9  0  -", "Jump directly to board 1-11"),
+        help_row("1-9  0  -  =", "Jump directly to board 1-12"),
         help_row("r", "Reload the current board (refetch from source)"),
         help_row("↑  ↓  k  j", "Move the highlighted row"),
         Line::from(""),
@@ -479,15 +555,28 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         help_row("s", "Output Speed — tokens generated per second"),
         help_row("p", "Blended Price — USD per 1M input+output tokens"),
         help_row("c", "Context Window — max tokens the model accepts"),
+        Line::styled("  AA Agents sort keys", dim),
+        help_row("i", "Index — Artificial Analysis Coding Agent Index"),
+        help_row("a", "Pass@1 — mean benchmark reward"),
+        help_row("p", "Cost — mean USD per task"),
+        help_row("t", "Time — mean wall-clock task runtime"),
+        help_row("u", "Tokens — mean total token usage per task"),
+        help_row("s", "Turns — mean agent turns per task"),
         Line::styled("  Arena sort keys", dim),
         help_row("n", "Rank — leaderboard position (1 = best)"),
         help_row("i", "Rating — ELO-style score from head-to-head votes"),
         help_row("v", "Votes — number of human comparisons collected"),
-        help_row("p", "Price — $/M tokens, $/image, or $/sec (board-dependent)"),
+        help_row(
+            "p",
+            "Price — $/M tokens, $/image, or $/sec (board-dependent)",
+        ),
         help_row("c", "Context Window — max tokens the model accepts"),
         Line::from(""),
         Line::styled("Filter", head),
-        help_row("/", "Begin editing a substring filter for the current board"),
+        help_row(
+            "/",
+            "Begin editing a substring filter for the current board",
+        ),
         help_row("type", "Narrows visible rows in real time"),
         help_row("Backspace", "Delete a character while editing"),
         help_row("Ctrl-U", "Clear the filter"),
@@ -500,7 +589,9 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         .borders(Borders::ALL)
         .title(" Keybindings & metrics ")
         .style(Style::default().fg(Color::Gray));
-    let p = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    let p = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(p, popup);
 }
 
@@ -575,6 +666,7 @@ fn status_marker(status: Option<&Status>) -> Span<'static> {
 fn tab_label(board: Board) -> String {
     match board {
         Board::Aa => "AA".to_string(),
+        Board::AaAgents => "AAg".to_string(),
         Board::Arena(arena::Slug::Text) => "Txt".to_string(),
         Board::Arena(arena::Slug::Search) => "Srch".to_string(),
         Board::Arena(arena::Slug::Vision) => "Vis".to_string(),
@@ -598,6 +690,15 @@ fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
                 format!("{visible}/{} models", v.len())
             } else {
                 format!("{} models", v.len())
+            };
+            Span::styled(label, Style::default().fg(Color::Green))
+        }
+        Some(Status::Loaded(Data::AaAgents(v))) => {
+            let visible = app.row_count(board);
+            let label = if filter_is_active(query) {
+                format!("{visible}/{} agents", v.len())
+            } else {
+                format!("{} agents", v.len())
             };
             Span::styled(label, Style::default().fg(Color::Green))
         }
@@ -625,6 +726,11 @@ fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
             aa_key_label(app.aa_sort.key),
             app.aa_sort.dir.arrow()
         ),
+        Board::AaAgents => format!(
+            "sort: {} {}",
+            agent_key_label(app.agent_sort.key),
+            app.agent_sort.dir.arrow()
+        ),
         Board::Arena(_) => format!(
             "sort: {} {}",
             arena_key_label(app.arena_sort.key),
@@ -633,6 +739,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
     };
     let source = match board {
         Board::Aa => "artificialanalysis.ai".to_string(),
+        Board::AaAgents => "artificialanalysis.ai/agents/coding-agents".to_string(),
         Board::Arena(s) => format!("arena.ai/leaderboard/{}", s.path()),
     };
 
@@ -686,6 +793,24 @@ fn render_body(frame: &mut Frame, area: Rect, app: &mut AppState) {
                     }
                 }
                 View::Chart => render_aa_chart(frame, area, &models, app),
+            }
+        }
+        Some(Status::Loaded(Data::AaAgents(rows))) => {
+            let rows = filter_agent_rows(&rows, &query);
+            if rows.is_empty() && filter_is_active(&query) {
+                render_filter_empty(frame, area, &query);
+                return;
+            }
+            match app.current_view() {
+                View::Table => {
+                    let selected = selected_index(app, board);
+                    let (table_area, detail_area) = split_body(area);
+                    render_agents_table(frame, table_area, &rows, app, board);
+                    if let Some(detail_area) = detail_area {
+                        render_agent_detail(frame, detail_area, rows.get(selected));
+                    }
+                }
+                View::Chart => render_agents_chart(frame, area, &rows, app),
             }
         }
         Some(Status::Loaded(Data::Arena(entries))) => {
@@ -986,6 +1111,230 @@ fn render_aa_detail(frame: &mut Frame, area: Rect, model: Option<&aa::Model>) {
     frame.render_widget(p, area);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentColumn {
+    Index,
+    Agent,
+    Model,
+    Provider,
+    Score,
+    Pass,
+    Cost,
+    Time,
+    Tokens,
+    Turns,
+    Released,
+}
+
+impl AgentColumn {
+    fn header(self) -> &'static str {
+        match self {
+            AgentColumn::Index => "#",
+            AgentColumn::Agent => "Agent",
+            AgentColumn::Model => "Model",
+            AgentColumn::Provider => "Provider",
+            AgentColumn::Score => "Index",
+            AgentColumn::Pass => "Pass@1",
+            AgentColumn::Cost => "Cost",
+            AgentColumn::Time => "Time",
+            AgentColumn::Tokens => "Tokens",
+            AgentColumn::Turns => "Turns",
+            AgentColumn::Released => "Release",
+        }
+    }
+
+    fn width(self) -> Constraint {
+        match self {
+            AgentColumn::Index => Constraint::Length(3),
+            AgentColumn::Agent => Constraint::Min(12),
+            AgentColumn::Model => Constraint::Length(24),
+            AgentColumn::Provider => Constraint::Length(12),
+            AgentColumn::Score => Constraint::Length(7),
+            AgentColumn::Pass => Constraint::Length(7),
+            AgentColumn::Cost => Constraint::Length(8),
+            AgentColumn::Time => Constraint::Length(8),
+            AgentColumn::Tokens => Constraint::Length(8),
+            AgentColumn::Turns => Constraint::Length(6),
+            AgentColumn::Released => Constraint::Length(10),
+        }
+    }
+
+    fn order(self) -> u8 {
+        match self {
+            AgentColumn::Index => 0,
+            AgentColumn::Agent => 1,
+            AgentColumn::Model => 2,
+            AgentColumn::Provider => 3,
+            AgentColumn::Score => 4,
+            AgentColumn::Pass => 5,
+            AgentColumn::Cost => 6,
+            AgentColumn::Time => 7,
+            AgentColumn::Tokens => 8,
+            AgentColumn::Turns => 9,
+            AgentColumn::Released => 10,
+        }
+    }
+}
+
+fn agent_columns(width: u16, sort_key: AgentKey) -> Vec<AgentColumn> {
+    let mut columns = vec![
+        AgentColumn::Index,
+        AgentColumn::Agent,
+        AgentColumn::Score,
+        AgentColumn::Pass,
+        AgentColumn::Cost,
+    ];
+    push_unique(&mut columns, agent_column_for_key(sort_key));
+    if width >= 62 {
+        push_unique(&mut columns, AgentColumn::Model);
+    }
+    if width >= 76 {
+        push_unique(&mut columns, AgentColumn::Provider);
+    }
+    if width >= 88 {
+        push_unique(&mut columns, AgentColumn::Time);
+    }
+    if width >= 100 {
+        push_unique(&mut columns, AgentColumn::Tokens);
+    }
+    if width >= 110 {
+        push_unique(&mut columns, AgentColumn::Turns);
+    }
+    if width >= 122 {
+        push_unique(&mut columns, AgentColumn::Released);
+    }
+    columns.sort_by_key(|column| column.order());
+    columns
+}
+
+fn agent_column_for_key(key: AgentKey) -> AgentColumn {
+    match key {
+        AgentKey::Index => AgentColumn::Score,
+        AgentKey::Pass => AgentColumn::Pass,
+        AgentKey::Cost => AgentColumn::Cost,
+        AgentKey::Time => AgentColumn::Time,
+        AgentKey::Tokens => AgentColumn::Tokens,
+        AgentKey::Turns => AgentColumn::Turns,
+    }
+}
+
+fn render_agents_table(
+    frame: &mut Frame,
+    area: Rect,
+    rows: &[coding_agents::AgentRow],
+    app: &mut AppState,
+    board: Board,
+) {
+    let columns = agent_columns(area.width, app.agent_sort.key);
+    let header = Row::new(columns.iter().map(|column| header_cell(column.header())));
+
+    let table_rows = rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| Row::new(columns.iter().map(|column| agent_cell(*column, i, row))));
+
+    let widths: Vec<Constraint> = columns.iter().map(|column| column.width()).collect();
+    let title = format!("AA coding agents ({})", rows.len());
+
+    let table = Table::new(table_rows, widths)
+        .header(header.height(1))
+        .row_highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White).bold())
+        .highlight_symbol("> ")
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .column_spacing(1);
+
+    let st = app.table_state.entry(board).or_default();
+    frame.render_stateful_widget(table, area, st);
+}
+
+fn agent_cell(column: AgentColumn, index: usize, row: &coding_agents::AgentRow) -> Cell<'static> {
+    match column {
+        AgentColumn::Index => {
+            Cell::from(format!("{:>2}", index + 1)).style(Style::default().fg(Color::DarkGray))
+        }
+        AgentColumn::Agent => Cell::from(row.agent().to_string()).style(Style::default().bold()),
+        AgentColumn::Model => Cell::from(row.model().to_string()),
+        AgentColumn::Provider => {
+            Cell::from(row.provider().to_string()).style(Style::default().fg(Color::Magenta))
+        }
+        AgentColumn::Score => {
+            Cell::from(fmt_pct(row.index_score, 1)).style(score_color_pct(row.index_score))
+        }
+        AgentColumn::Pass => {
+            Cell::from(fmt_pct(row.mean.reward, 1)).style(score_color_pct(row.mean.reward))
+        }
+        AgentColumn::Cost => {
+            Cell::from(fmt_price(row.mean.cost_usd, 2, "")).style(price_color(row.mean.cost_usd))
+        }
+        AgentColumn::Time => Cell::from(fmt_duration(row.mean.agent_wall_time_sec))
+            .style(Style::default().fg(Color::Blue)),
+        AgentColumn::Tokens => Cell::from(fmt_compact_f(row.mean.total_tokens)),
+        AgentColumn::Turns => Cell::from(fmt_f(row.mean.steps, 1)),
+        AgentColumn::Released => Cell::from(row.release_date.clone().unwrap_or_else(|| "-".into()))
+            .style(Style::default().fg(Color::DarkGray)),
+    }
+}
+
+fn render_agent_detail(frame: &mut Frame, area: Rect, row: Option<&coding_agents::AgentRow>) {
+    let max = area.width.saturating_sub(4) as usize;
+    let lines = match row {
+        Some(row) => vec![
+            Line::styled(
+                truncate(&row.label(), max.max(8)),
+                Style::default().fg(Color::Cyan).bold(),
+            ),
+            Line::from(""),
+            detail_line("Agent", row.agent(), Style::default().fg(Color::Cyan)),
+            detail_line("Model", row.model(), Style::default()),
+            detail_line(
+                "Provider",
+                row.provider(),
+                Style::default().fg(Color::Magenta),
+            ),
+            detail_line(
+                "Index",
+                fmt_pct(row.index_score, 1),
+                score_color_pct(row.index_score),
+            ),
+            detail_line(
+                "Pass@1",
+                fmt_pct(row.mean.reward, 1),
+                score_color_pct(row.mean.reward),
+            ),
+            detail_line(
+                "Cost",
+                fmt_price(row.mean.cost_usd, 2, "/task"),
+                price_color(row.mean.cost_usd),
+            ),
+            detail_line(
+                "Time",
+                fmt_duration(row.mean.agent_wall_time_sec),
+                Style::default().fg(Color::Blue),
+            ),
+            detail_line(
+                "Tokens",
+                fmt_compact_f(row.mean.total_tokens),
+                Style::default(),
+            ),
+            detail_line("Turns", fmt_f(row.mean.steps, 1), Style::default()),
+            detail_line(
+                "Release",
+                row.release_date.clone().unwrap_or_else(|| "-".into()),
+                Style::default().fg(Color::Gray),
+            ),
+        ],
+        None => vec![Line::styled(
+            "No row selected",
+            Style::default().fg(Color::DarkGray),
+        )],
+    };
+
+    let p = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Selected"))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(p, area);
+}
+
 fn detail_line(label: &str, value: impl Into<String>, style: Style) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{label:<9}"), Style::default().fg(Color::DarkGray)),
@@ -1038,6 +1387,56 @@ fn render_aa_chart(frame: &mut Frame, area: Rect, models: &[aa::Model], app: &Ap
     }
 }
 
+fn render_agents_chart(
+    frame: &mut Frame,
+    area: Rect,
+    rows: &[coding_agents::AgentRow],
+    app: &AppState,
+) {
+    let key = app.agent_sort.key;
+    let (chart_area, summary_area) = split_chart_body(area);
+    let max_bars = chart_capacity(chart_area);
+    let chart_rows: Vec<ChartRow> = rows
+        .iter()
+        .filter_map(|row| {
+            let value = agent_metric(row, key)?;
+            Some(ChartRow {
+                name: row.label(),
+                meta: row.provider().to_string(),
+                value,
+                value_label: agent_chart_text_value(row, key),
+                color_seed: row.id.clone(),
+            })
+        })
+        .take(max_bars)
+        .collect();
+
+    let title = format!(
+        "AA Agents chart - {} {} (top {}/{})",
+        agent_key_label(key),
+        app.agent_sort.dir.arrow(),
+        chart_rows.len(),
+        rows.len(),
+    );
+    let empty = format!(
+        "no data for {} - switch sort key (i/a/p/t/u/s) or press m for table",
+        agent_key_label(key)
+    );
+    let preference = agent_chart_preference(key);
+    render_metric_chart(frame, chart_area, &title, &empty, &chart_rows, preference);
+
+    if let Some(summary_area) = summary_area {
+        render_chart_summary(
+            frame,
+            summary_area,
+            &chart_rows,
+            rows.len(),
+            agent_key_label(key),
+            preference,
+        );
+    }
+}
+
 fn render_arena_chart(
     frame: &mut Frame,
     area: Rect,
@@ -1048,7 +1447,7 @@ fn render_arena_chart(
     let key = app.arena_sort.key;
     let kind = match board {
         Board::Arena(s) => s.kind(),
-        Board::Aa => arena::Kind::Text,
+        _ => arena::Kind::Text,
     };
     let (chart_area, summary_area) = split_chart_body(area);
     let max_bars = chart_capacity(chart_area);
@@ -1270,6 +1669,15 @@ fn aa_chart_preference(key: AaKey) -> ChartPreference {
     }
 }
 
+fn agent_chart_preference(key: AgentKey) -> ChartPreference {
+    match key {
+        AgentKey::Cost | AgentKey::Time | AgentKey::Tokens | AgentKey::Turns => {
+            ChartPreference::Lower
+        }
+        AgentKey::Index | AgentKey::Pass => ChartPreference::Higher,
+    }
+}
+
 fn arena_chart_preference(key: ArenaKey) -> ChartPreference {
     match key {
         ArenaKey::Rank | ArenaKey::Price => ChartPreference::Lower,
@@ -1286,6 +1694,17 @@ fn aa_chart_text_value(m: &aa::Model, key: AaKey) -> String {
             .context_window_tokens
             .map(fmt_tokens)
             .unwrap_or_else(|| "-".into()),
+    }
+}
+
+fn agent_chart_text_value(row: &coding_agents::AgentRow, key: AgentKey) -> String {
+    match key {
+        AgentKey::Index => fmt_pct(row.index_score, 1),
+        AgentKey::Pass => fmt_pct(row.mean.reward, 1),
+        AgentKey::Cost => fmt_price(row.mean.cost_usd, 2, "/task"),
+        AgentKey::Time => fmt_duration(row.mean.agent_wall_time_sec),
+        AgentKey::Tokens => fmt_compact_f(row.mean.total_tokens),
+        AgentKey::Turns => fmt_f(row.mean.steps, 1),
     }
 }
 
@@ -1391,6 +1810,16 @@ fn count_matching_aa(models: &[aa::Model], query: &str) -> usize {
         .count()
 }
 
+fn count_matching_agents(rows: &[coding_agents::AgentRow], query: &str) -> usize {
+    let tokens = filter_tokens(query);
+    if tokens.is_empty() {
+        return rows.len();
+    }
+    rows.iter()
+        .filter(|row| agent_matches_filter(row, &tokens))
+        .count()
+}
+
 fn count_matching_arena(entries: &[arena::Entry], query: &str) -> usize {
     let tokens = filter_tokens(query);
     if tokens.is_empty() {
@@ -1410,6 +1839,20 @@ fn filter_aa_models(models: &[aa::Model], query: &str) -> Vec<aa::Model> {
     models
         .iter()
         .filter(|model| aa_matches_filter(model, &tokens))
+        .cloned()
+        .collect()
+}
+
+fn filter_agent_rows(
+    rows: &[coding_agents::AgentRow],
+    query: &str,
+) -> Vec<coding_agents::AgentRow> {
+    let tokens = filter_tokens(query);
+    if tokens.is_empty() {
+        return rows.to_vec();
+    }
+    rows.iter()
+        .filter(|row| agent_matches_filter(row, &tokens))
         .cloned()
         .collect()
 }
@@ -1443,6 +1886,23 @@ fn aa_matches_filter(model: &aa::Model, tokens: &[String]) -> bool {
         model.provider(),
         model.release_date.as_deref().unwrap_or(""),
         weights
+    )
+    .to_lowercase();
+    tokens.iter().all(|token| haystack.contains(token))
+}
+
+fn agent_matches_filter(row: &coding_agents::AgentRow, tokens: &[String]) -> bool {
+    let haystack = format!(
+        "{} {} {} {} {} {} {} {} {}",
+        row.id,
+        row.agent_name,
+        row.agent(),
+        row.model(),
+        row.provider(),
+        row.display_label.as_deref().unwrap_or(""),
+        row.model_name.as_deref().unwrap_or(""),
+        row.host_model_slug.as_deref().unwrap_or(""),
+        row.release_date.as_deref().unwrap_or("")
     )
     .to_lowercase();
     tokens.iter().all(|token| haystack.contains(token))
@@ -1771,6 +2231,7 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let sort_keys = match app.current_board() {
         Board::Aa => "i/s/p/c",
+        Board::AaAgents => "i/a/p/t/u/s",
         Board::Arena(_) => "n/i/v/p/c",
     };
     let view_action = match app.current_view() {
@@ -1818,10 +2279,30 @@ fn fmt_f(v: Option<f64>, decimals: usize) -> String {
     }
 }
 
+fn fmt_pct(v: Option<f64>, decimals: usize) -> String {
+    match v {
+        Some(x) => format!("{:.*}", decimals, x * 100.0),
+        None => "-".into(),
+    }
+}
+
 fn fmt_price(v: Option<f64>, decimals: usize, suffix: &str) -> String {
     match v {
         Some(x) => format!("${x:.*}{suffix}", decimals),
         None => "-".into(),
+    }
+}
+
+fn fmt_duration(v: Option<f64>) -> String {
+    let Some(seconds) = v else {
+        return "-".into();
+    };
+    if seconds >= 3600.0 {
+        format!("{:.1}h", seconds / 3600.0)
+    } else if seconds >= 60.0 {
+        format!("{:.1}m", seconds / 60.0)
+    } else {
+        format!("{seconds:.0}s")
     }
 }
 
@@ -1832,6 +2313,13 @@ fn fmt_tokens(n: u64) -> String {
         format!("{}K", n / 1_000)
     } else {
         n.to_string()
+    }
+}
+
+fn fmt_compact_f(v: Option<f64>) -> String {
+    match v {
+        Some(x) if x.is_finite() && x >= 0.0 => format_compact(x.round() as u64),
+        Some(_) | None => "-".into(),
     }
 }
 
@@ -1853,6 +2341,17 @@ fn aa_key_label(k: AaKey) -> &'static str {
         AaKey::Speed => "Speed",
         AaKey::Price => "Price",
         AaKey::Context => "Context",
+    }
+}
+
+fn agent_key_label(k: AgentKey) -> &'static str {
+    match k {
+        AgentKey::Index => "Index",
+        AgentKey::Pass => "Pass@1",
+        AgentKey::Cost => "Cost",
+        AgentKey::Time => "Time",
+        AgentKey::Tokens => "Tokens",
+        AgentKey::Turns => "Turns",
     }
 }
 
@@ -1885,6 +2384,10 @@ fn score_color(v: Option<f64>, low: f64, high: f64) -> Style {
         Color::Red
     };
     Style::default().fg(color).bold()
+}
+
+fn score_color_pct(v: Option<f64>) -> Style {
+    score_color(v.map(|x| x * 100.0), 30.0, 60.0)
 }
 
 fn price_color(v: Option<f64>) -> Style {
@@ -1956,7 +2459,7 @@ mod tests {
             ])),
         );
 
-        app.select_board(1);
+        app.select_board(2);
         app.begin_filter();
         for c in "meta".chars() {
             app.push_filter_char(c);
@@ -1977,7 +2480,7 @@ mod tests {
         app.toggle_view();
         assert_eq!(app.current_view(), View::Chart);
 
-        app.select_board(1);
+        app.select_board(2);
         assert_eq!(app.current_board(), arena_board);
         assert_eq!(app.current_view(), View::Table);
 
@@ -1986,6 +2489,15 @@ mod tests {
 
         app.select_board(0);
         assert_eq!(app.current_view(), View::Chart);
+    }
+
+    #[test]
+    fn twelfth_board_uses_equals_shortcut() {
+        let app = AppState::new();
+
+        assert_eq!(app.boards.len(), 12);
+        assert_eq!(app.boards[1], Board::AaAgents);
+        assert_eq!(app.boards[11].shortcut(11), Some('='));
     }
 
     #[test]
@@ -2006,6 +2518,26 @@ mod tests {
         };
         assert_eq!(models[0].name, "Scored Intel");
         assert_eq!(models[1].name, "Missing Intel");
+    }
+
+    #[test]
+    fn descending_agent_sorts_keep_missing_metrics_last() {
+        let mut app = AppState::new();
+        let mut missing = agent_row("missing", "Missing Agent", "Unknown");
+        missing.index_score = None;
+        app.set_status(
+            Board::AaAgents,
+            Status::Loaded(Data::AaAgents(vec![
+                missing,
+                agent_row("scored", "Scored Agent", "Known"),
+            ])),
+        );
+
+        let Some(Status::Loaded(Data::AaAgents(rows))) = app.status.get(&Board::AaAgents) else {
+            panic!("AA Agents data should be loaded");
+        };
+        assert_eq!(rows[0].agent(), "Scored Agent");
+        assert_eq!(rows[1].agent(), "Missing Agent");
     }
 
     #[test]
@@ -2035,6 +2567,16 @@ mod tests {
         assert!(cols.contains(&ArenaColumn::InputPrice));
         assert!(cols.contains(&ArenaColumn::OutputPrice));
         assert!(!cols.contains(&ArenaColumn::License));
+    }
+
+    #[test]
+    fn responsive_agent_columns_keep_active_sort_metric_visible() {
+        let cols = agent_columns(48, AgentKey::Time);
+
+        assert!(cols.contains(&AgentColumn::Time));
+        assert!(cols.contains(&AgentColumn::Agent));
+        assert!(cols.contains(&AgentColumn::Score));
+        assert!(!cols.contains(&AgentColumn::Released));
     }
 
     #[test]
@@ -2072,7 +2614,7 @@ mod tests {
     fn render_draws_arena_chart_view() {
         let mut app = AppState::new();
         let board = Board::Arena(arena::Slug::Text);
-        app.select_board(1);
+        app.select_board(2);
         app.set_status(
             board,
             Status::Loaded(Data::Arena(vec![
@@ -2091,6 +2633,30 @@ mod tests {
         assert!(text.contains("Chart stats"));
         assert!(text.contains("view: chart"));
         assert!(text.contains("Claude Sonnet"));
+    }
+
+    #[test]
+    fn render_draws_agents_chart_view() {
+        let mut app = AppState::new();
+        app.select_board(1);
+        app.set_status(
+            Board::AaAgents,
+            Status::Loaded(Data::AaAgents(vec![
+                agent_row("claude-code", "Claude Code", "Anthropic"),
+                agent_row("codex", "Codex", "OpenAI"),
+            ])),
+        );
+        app.toggle_view();
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(132, 32)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = rendered_text(terminal.backend());
+
+        assert!(text.contains("AA Agents chart"));
+        assert!(text.contains("Chart stats"));
+        assert!(text.contains("view: chart"));
+        assert!(text.contains("Claude Code"));
     }
 
     fn rendered_text(backend: &ratatui::backend::TestBackend) -> String {
@@ -2133,6 +2699,32 @@ mod tests {
             context_length: Some(128_000),
             price_per_image: None,
             price_per_second: None,
+        }
+    }
+
+    fn agent_row(id: &str, agent: &str, provider: &str) -> coding_agents::AgentRow {
+        coding_agents::AgentRow {
+            id: id.to_string(),
+            agent_name: agent.to_string(),
+            provider: Some(provider.to_string()),
+            host_name: Some(provider.to_string()),
+            host_short_name: Some(provider.to_string()),
+            model_name: Some(format!("{provider} Model")),
+            host_model_slug: Some(format!("{}_model", provider.to_lowercase())),
+            display_label: Some(format!("{agent} - {provider} Model")),
+            release_date: Some("2026-01-01".to_string()),
+            index_score: Some(0.6),
+            display: coding_agents::AgentDisplay {
+                agent: Some(agent.to_string()),
+                model: Some(format!("{provider} Model")),
+            },
+            mean: coding_agents::AgentMean {
+                reward: Some(0.55),
+                cost_usd: Some(1.25),
+                agent_wall_time_sec: Some(420.0),
+                steps: Some(42.0),
+                total_tokens: Some(1_500_000.0),
+            },
         }
     }
 }
