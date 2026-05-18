@@ -11,13 +11,24 @@ pub enum Board {
     Arena(arena::Slug),
 }
 
+const ALL_BOARDS: [Board; 12] = [
+    Board::Aa,
+    Board::AaAgents,
+    Board::Arena(arena::Slug::Text),
+    Board::Arena(arena::Slug::Search),
+    Board::Arena(arena::Slug::Vision),
+    Board::Arena(arena::Slug::Document),
+    Board::Arena(arena::Slug::Code),
+    Board::Arena(arena::Slug::TextToImage),
+    Board::Arena(arena::Slug::ImageEdit),
+    Board::Arena(arena::Slug::TextToVideo),
+    Board::Arena(arena::Slug::ImageToVideo),
+    Board::Arena(arena::Slug::VideoEdit),
+];
+
 impl Board {
-    pub fn all() -> Vec<Board> {
-        let mut v = vec![Board::Aa, Board::AaAgents];
-        for s in arena::Slug::ALL {
-            v.push(Board::Arena(s));
-        }
-        v
+    pub fn all() -> &'static [Board] {
+        &ALL_BOARDS
     }
 
     pub fn label(self) -> String {
@@ -28,13 +39,28 @@ impl Board {
         }
     }
 
-    pub fn shortcut(self, idx: usize) -> Option<char> {
+    pub fn shortcut(idx: usize) -> Option<char> {
         match idx {
             0..=8 => char::from_digit((idx as u32) + 1, 10),
             9 => Some('0'),
             10 => Some('-'),
             11 => Some('='),
             _ => None,
+        }
+    }
+
+    pub fn from_shortcut(c: char) -> Option<usize> {
+        let idx = match c {
+            '1'..='9' => (c as u8 - b'1') as usize,
+            '0' => 9,
+            '-' => 10,
+            '=' => 11,
+            _ => return None,
+        };
+        if idx < ALL_BOARDS.len() {
+            Some(idx)
+        } else {
+            None
         }
     }
 }

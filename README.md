@@ -19,7 +19,7 @@ No API keys. No headless browser. No JavaScript runtime. Just HTTP and regex.
 │ 3  Gemini 2.5 Pro        67.0  3.50  Google       1M                        │
 │ ...                                                                         │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ ? keybindings  q quit  [ ] board  ↑/↓ move row  r reload                   │
+│ ? keybindings  q quit  [ ] board  ↑/↓ move row  r reload  y copy            │
 │ i/s/p/c sort  o asc/desc  m chart view  / filter                           │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -27,13 +27,14 @@ No API keys. No headless browser. No JavaScript runtime. Just HTTP and regex.
 ## Features
 
 - **12 leaderboard boards** — Artificial Analysis models, Artificial Analysis coding agents, and Arena (text, search, vision, document, code, text-to-image, image-edit, text-to-video, image-to-video, video-edit)
-- **Lazy fetching** — boards load on first visit, cached for the session
-- **Neighbor prefetching** — adjacent boards load in the background after the current one finishes
+- **Parallel fetching** — all 12 boards load simultaneously on startup, cached for the session
 - **Table and chart views** — toggle with `m`
 - **AA Agents radar panel** — wide terminals show a top-5 multi-metric comparison beside the coding-agents table
 - **Per-board filtering** — type `/` to filter, `Ctrl-U` to clear
 - **Responsive layout** — adapts columns and detail pane to terminal size
 - **Sorting** — by any metric, ascending or descending
+- **Mouse support** — scroll with mouse wheel, click tabs to switch boards
+- **Row position indicator** — shows current row / total in the footer
 
 ## Installation
 
@@ -51,7 +52,7 @@ Prebuilt for macOS Apple Silicon (`aarch64-apple-darwin`) and Linux x86_64 (`x86
 cargo install --git https://github.com/D1376/llmpk.git
 ```
 
-Requires Rust 1.70+.
+Requires Rust 1.80+.
 
 ## Usage
 
@@ -63,8 +64,12 @@ Requires Rust 1.70+.
 | `[` / `]` | Previous / next board |
 | `1`–`9`, `0`, `-`, `=` | Jump to board 1–12 |
 | `r` | Reload current board |
+| `y` | Copy selected model name to clipboard (OSC 52) |
 | `↑` / `↓` (or `k` / `j`) | Move selected row |
+| `PgUp` / `PgDn` | Move by 10 rows |
+| `Home` / `End` (or `g` / `G`) | Jump to first / last row |
 | `?` or `h` | Toggle in-app help (lists every keybinding and explains each metric) |
+| Mouse scroll | Scroll the table |
 
 ### Sorting
 
@@ -77,7 +82,7 @@ Requires Rust 1.70+.
 | `t` | — | Time | — |
 | `u` | — | Tokens | — |
 | `c` | Context | — | Context |
-| `n` | — | — | Rank |
+| `k` / `n` | — | — | Rank |
 | `v` | — | — | Votes |
 | `o` | Toggle sort direction | Toggle sort direction | Toggle sort direction |
 
@@ -150,13 +155,18 @@ LLMPK_BENCH=1 cargo test bench_fetch -- --nocapture
 
 ```
 src/
-  main.rs    Entry point, terminal setup/teardown, event loop, fetch dispatch
-  rsc.rs     HTTP client, RSC stream extraction, brace/bracket scanners
-  aa.rs      artificialanalysis.ai parser
-  coding_agents.rs artificialanalysis.ai coding agents parser
-  arena.rs   arena.ai parser, slug enum, entry struct
-  board.rs   Board enum, Data/Status wrappers, fetch dispatch
-  ui.rs      Tabs, table/chart rendering, sort state, key handling
+  main.rs           Entry point, terminal setup/teardown, event loop, fetch dispatch
+  rsc.rs            HTTP client, RSC stream extraction, brace/bracket scanners
+  aa.rs             artificialanalysis.ai parser
+  coding_agents.rs  artificialanalysis.ai coding agents parser
+  arena.rs          arena.ai parser, slug enum, entry struct
+  board.rs          Board enum, Data/Status wrappers, fetch dispatch
+  ui.rs             AppState, sort/filter state, render dispatch, shared helpers
+  ui/aa_board.rs    AA table/detail/chart rendering
+  ui/agents.rs      Agents table/radar/chart rendering, brand colors
+  ui/arena_board.rs Arena table/detail/chart rendering
+  ui/chart.rs       Shared chart infrastructure (ChartRow, bar charts)
+  ui/chrome.rs      Tabs, header, footer, help overlay, loading/error screens
 ```
 
 ## License

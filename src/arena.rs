@@ -18,6 +18,7 @@ pub enum Slug {
 }
 
 impl Slug {
+    #[allow(dead_code)]
     pub const ALL: [Slug; 10] = [
         Slug::Text,
         Slug::Search,
@@ -111,8 +112,9 @@ pub fn fetch(slug: Slug) -> Result<Vec<Entry>> {
 
 pub fn parse(html: &str) -> Result<Vec<Entry>> {
     let stream = rsc::extract_stream(html)?;
-    let arr = rsc::first_array_after(&stream, "entries")
-        .ok_or_else(|| anyhow!("no entries array in arena.ai page"))?;
+    let arr = rsc::first_array_after(&stream, "entries").ok_or_else(|| {
+        anyhow!("could not find leaderboard entries — arena.ai may have changed its structure")
+    })?;
     let entries: Vec<Entry> = serde_json::from_str(arr)?;
     if entries.is_empty() {
         return Err(anyhow!("entries array empty"));

@@ -1,23 +1,28 @@
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
-    symbols::Marker,
     text::{Line, Span},
-    widgets::{
-        canvas::{Canvas, Context as CanvasContext, Line as CanvasLine, Points},
-        Bar, BarChart, BarGroup, Block, Borders, Cell, Paragraph, Row, Table, TableState, Tabs,
-        Wrap,
-    },
+    widgets::{Cell, TableState},
     Frame,
 };
+
+mod aa_board;
+mod agents;
+mod arena_board;
+mod chart;
+mod chrome;
 
 use crate::aa;
 use crate::arena;
 use crate::board::{Board, Data, Status};
 use crate::coding_agents;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortDir {
@@ -93,7 +98,7 @@ pub enum View {
 }
 
 pub struct AppState {
-    pub boards: Vec<Board>,
+    pub boards: &'static [Board],
     pub current: usize,
     pub status: HashMap<Board, Status>,
     pub table_state: HashMap<Board, TableState>,
@@ -211,6 +216,42 @@ impl AppState {
         let st = self.table_state.entry(board).or_default();
         let i = st.selected().unwrap_or(0).saturating_sub(1);
         st.select(Some(i));
+    }
+
+    pub fn move_page_down(&mut self) {
+        let board = self.current_board();
+        let len = self.row_count(board);
+        if len == 0 {
+            return;
+        }
+        let page = 10;
+        let st = self.table_state.entry(board).or_default();
+        let i = st.selected().map(|i| i + page).unwrap_or(0).min(len - 1);
+        st.select(Some(i));
+    }
+
+    pub fn move_page_up(&mut self) {
+        let board = self.current_board();
+        let st = self.table_state.entry(board).or_default();
+        let i = st.selected().unwrap_or(0).saturating_sub(10);
+        st.select(Some(i));
+    }
+
+    pub fn move_to_top(&mut self) {
+        let board = self.current_board();
+        if self.row_count(board) > 0 {
+            let st = self.table_state.entry(board).or_default();
+            st.select(Some(0));
+        }
+    }
+
+    pub fn move_to_bottom(&mut self) {
+        let board = self.current_board();
+        let len = self.row_count(board);
+        if len > 0 {
+            let st = self.table_state.entry(board).or_default();
+            st.select(Some(len - 1));
+        }
     }
 
     fn row_count(&self, board: Board) -> usize {
@@ -378,6 +419,29 @@ impl AppState {
         self.resort_current();
     }
 
+    pub fn selected_name(&self) -> Option<String> {
+        let board = self.current_board();
+        let idx = selected_index(self, board);
+        match self.status.get(&board) {
+            Some(Status::Loaded(Data::Aa(models))) => {
+                let query = self.filter_query(board);
+                let filtered = filter_aa_models(models, query);
+                filtered.get(idx).map(|m| m.name.clone())
+            }
+            Some(Status::Loaded(Data::AaAgents(rows))) => {
+                let query = self.filter_query(board);
+                let filtered = filter_agent_rows(rows, query);
+                filtered.get(idx).map(|r| r.label())
+            }
+            Some(Status::Loaded(Data::Arena(entries))) => {
+                let query = self.filter_query(board);
+                let filtered = filter_arena_entries(entries, query);
+                filtered.get(idx).map(|e| e.name.clone())
+            }
+            _ => None,
+        }
+    }
+
     pub fn toggle_dir(&mut self) {
         match self.current_board() {
             Board::Aa => self.aa_sort.dir = self.aa_sort.dir.toggle(),
@@ -497,7 +561,7 @@ fn cmp_opt_for_dir(a: Option<f64>, b: Option<f64>, dir: SortDir) -> Ordering {
 
 pub fn render(frame: &mut Frame, app: &mut AppState) {
     if frame.area().width < 36 || frame.area().height < 8 {
-        render_tiny(frame);
+        chrome::render_tiny(frame);
         return;
     }
 
@@ -511,353 +575,127 @@ pub fn render(frame: &mut Frame, app: &mut AppState) {
         ])
         .split(frame.area());
 
-    render_tabs(frame, chunks[0], app);
-    render_header(frame, chunks[1], app);
+    chrome::render_tabs(frame, chunks[0], app);
+    chrome::render_header(frame, chunks[1], app);
     render_body(frame, chunks[2], app);
-    render_footer(frame, chunks[3], app);
+    chrome::render_footer(frame, chunks[3], app);
 
     if app.is_help_open() {
-        render_help_overlay(frame, frame.area());
+        chrome::render_help_overlay(frame, frame.area());
     }
-}
-
-fn render_help_overlay(frame: &mut Frame, area: Rect) {
-    let popup = centered_rect(area, 82, 42);
-    frame.render_widget(ratatui::widgets::Clear, popup);
-
-    let dim = Style::default().fg(Color::DarkGray);
-    let head = Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD);
-    let lines = vec![
-        Line::styled("Boards", head),
-        help_row("AA", "artificialanalysis.ai composite ranking of LLMs"),
-        help_row(
-            "AA Agents",
-            "artificialanalysis.ai coding-agent benchmark index",
-        ),
-        help_row(
-            "Arena",
-            "arena.ai community-vote leaderboards (10 modalities)",
-        ),
-        Line::from(""),
-        Line::styled("Navigation", head),
-        help_row("q  Esc  Ctrl-C", "Quit llmpk"),
-        help_row("?  h", "Toggle this help overlay"),
-        help_row("[   ]", "Previous / next board (cycles)"),
-        help_row("1-9  0  -  =", "Jump directly to board 1-12"),
-        help_row("r", "Reload the current board (refetch from source)"),
-        help_row("↑  ↓  k  j", "Move the highlighted row"),
-        Line::from(""),
-        Line::styled("View & sort", head),
-        help_row("m", "Toggle table / chart view"),
-        help_row("o", "Reverse current sort direction (asc <-> desc)"),
-        Line::styled("  AA sort keys", dim),
-        help_row("i", "Intelligence Index — composite quality score"),
-        help_row("s", "Output Speed — tokens generated per second"),
-        help_row("p", "Blended Price — USD per 1M input+output tokens"),
-        help_row("c", "Context Window — max tokens the model accepts"),
-        Line::styled("  AA Agents sort keys", dim),
-        help_row("i", "Index — Artificial Analysis Coding Agent Index"),
-        help_row("a", "Pass@1 — mean benchmark reward"),
-        help_row("p", "Cost — mean USD per task"),
-        help_row("t", "Time — mean wall-clock task runtime"),
-        help_row("u", "Tokens — mean total token usage per task"),
-        help_row("s", "Turns — mean agent turns per task"),
-        Line::styled("  Arena sort keys", dim),
-        help_row("n", "Rank — leaderboard position (1 = best)"),
-        help_row("i", "Rating — ELO-style score from head-to-head votes"),
-        help_row("v", "Votes — number of human comparisons collected"),
-        help_row(
-            "p",
-            "Price — $/M tokens, $/image, or $/sec (board-dependent)",
-        ),
-        help_row("c", "Context Window — max tokens the model accepts"),
-        Line::from(""),
-        Line::styled("Filter", head),
-        help_row(
-            "/",
-            "Begin editing a substring filter for the current board",
-        ),
-        help_row("type", "Narrows visible rows in real time"),
-        help_row("Backspace", "Delete a character while editing"),
-        help_row("Ctrl-U", "Clear the filter"),
-        help_row("Enter  Esc", "Finish editing (filter stays applied)"),
-        Line::from(""),
-        Line::styled("Press ?, h, or Esc to close", dim),
-    ];
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Keybindings & metrics ")
-        .style(Style::default().fg(Color::Gray));
-    let p = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(p, popup);
-}
-
-fn help_row(keys: &str, desc: &str) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(
-            format!("  {keys:<16}"),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::raw(desc.to_string()),
-    ])
-}
-
-fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
-    let w = width.min(area.width);
-    let h = height.min(area.height);
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
-    Rect::new(x, y, w, h)
-}
-
-fn render_tiny(frame: &mut Frame) {
-    let p = Paragraph::new("llmpk needs a larger terminal")
-        .style(Style::default().fg(Color::Yellow))
-        .block(Block::default().borders(Borders::ALL).title("llmpk"));
-    frame.render_widget(p, frame.area());
-}
-
-fn render_tabs(frame: &mut Frame, area: Rect, app: &AppState) {
-    let titles: Vec<Line> = app
-        .boards
-        .iter()
-        .enumerate()
-        .map(|(i, b)| {
-            let key = b.shortcut(i).unwrap_or(' ');
-            Line::from(vec![
-                Span::styled(
-                    format!("{key}"),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                status_marker(app.status.get(b)),
-                Span::raw(tab_label(*b)),
-            ])
-        })
-        .collect();
-    let tabs = Tabs::new(titles)
-        .select(app.current)
-        .block(Block::default().borders(Borders::ALL).title("Boards"))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .divider(" ");
-    frame.render_widget(tabs, area);
-}
-
-fn status_marker(status: Option<&Status>) -> Span<'static> {
-    match status {
-        Some(Status::Loading) => Span::styled("*", Style::default().fg(Color::Yellow)),
-        Some(Status::Error(_)) => Span::styled("!", Style::default().fg(Color::Red)),
-        _ => Span::raw(""),
-    }
-}
-
-fn tab_label(board: Board) -> String {
-    match board {
-        Board::Aa => "AA".to_string(),
-        Board::AaAgents => "AAg".to_string(),
-        Board::Arena(arena::Slug::Text) => "Txt".to_string(),
-        Board::Arena(arena::Slug::Search) => "Srch".to_string(),
-        Board::Arena(arena::Slug::Vision) => "Vis".to_string(),
-        Board::Arena(arena::Slug::Document) => "Doc".to_string(),
-        Board::Arena(arena::Slug::Code) => "Code".to_string(),
-        Board::Arena(arena::Slug::TextToImage) => "T2I".to_string(),
-        Board::Arena(arena::Slug::ImageEdit) => "Edit".to_string(),
-        Board::Arena(arena::Slug::TextToVideo) => "T2V".to_string(),
-        Board::Arena(arena::Slug::ImageToVideo) => "I2V".to_string(),
-        Board::Arena(arena::Slug::VideoEdit) => "VEd".to_string(),
-    }
-}
-
-fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
-    let board = app.current_board();
-    let query = app.current_filter();
-    let status_span = match app.status.get(&board) {
-        Some(Status::Loaded(Data::Aa(v))) => {
-            let visible = app.row_count(board);
-            let label = if filter_is_active(query) {
-                format!("{visible}/{} models", v.len())
-            } else {
-                format!("{} models", v.len())
-            };
-            Span::styled(label, Style::default().fg(Color::Green))
-        }
-        Some(Status::Loaded(Data::AaAgents(v))) => {
-            let visible = app.row_count(board);
-            let label = if filter_is_active(query) {
-                format!("{visible}/{} agents", v.len())
-            } else {
-                format!("{} agents", v.len())
-            };
-            Span::styled(label, Style::default().fg(Color::Green))
-        }
-        Some(Status::Loaded(Data::Arena(v))) => {
-            let visible = app.row_count(board);
-            let label = if filter_is_active(query) {
-                format!("{visible}/{} entries", v.len())
-            } else {
-                format!("{} entries", v.len())
-            };
-            Span::styled(label, Style::default().fg(Color::Green))
-        }
-        Some(Status::Loading) | None => {
-            Span::styled("loading...", Style::default().fg(Color::Yellow))
-        }
-        Some(Status::Error(e)) => Span::styled(
-            format!("error: {e}"),
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ),
-    };
-
-    let sort_label = match board {
-        Board::Aa => format!(
-            "sort: {} {}",
-            aa_key_label(app.aa_sort.key),
-            app.aa_sort.dir.arrow()
-        ),
-        Board::AaAgents => format!(
-            "sort: {} {}",
-            agent_key_label(app.agent_sort.key),
-            app.agent_sort.dir.arrow()
-        ),
-        Board::Arena(_) => format!(
-            "sort: {} {}",
-            arena_key_label(app.arena_sort.key),
-            app.arena_sort.dir.arrow()
-        ),
-    };
-    let source = match board {
-        Board::Aa => "artificialanalysis.ai".to_string(),
-        Board::AaAgents => "artificialanalysis.ai/agents/coding-agents".to_string(),
-        Board::Arena(s) => format!("arena.ai/leaderboard/{}", s.path()),
-    };
-
-    let mut spans = vec![
-        Span::styled(source, Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("  |  "),
-        status_span,
-        Span::raw("  |  "),
-        Span::styled(
-            view_label(app.current_view()),
-            Style::default().fg(Color::Blue),
-        ),
-        Span::raw("  |  "),
-        Span::styled(sort_label, Style::default().fg(Color::Cyan)),
-    ];
-    if app.is_filter_editing() || filter_is_active(query) {
-        spans.push(Span::raw("  |  "));
-        spans.push(Span::styled(
-            format!(
-                "filter: {}",
-                format_filter_label(query, app.is_filter_editing())
-            ),
-            Style::default().fg(Color::Yellow),
-        ));
-    }
-
-    let line = Line::from(spans);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!("llmpk - {}", board.label()));
-    frame.render_widget(Paragraph::new(line).block(block), area);
 }
 
 fn render_body(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let board = app.current_board();
     let query = app.current_filter().to_string();
-    match app.status.get(&board).cloned() {
+    let view = app.current_view();
+    let aa_sort_key = app.aa_sort.key;
+    let agent_sort_key = app.agent_sort.key;
+    let arena_sort_key = app.arena_sort.key;
+    let table_state = &mut app.table_state;
+
+    match app.status.get(&board) {
         Some(Status::Loaded(Data::Aa(models))) => {
-            let models = filter_aa_models(&models, &query);
-            if models.is_empty() && filter_is_active(&query) {
-                render_filter_empty(frame, area, &query);
+            let filtered = filter_aa_models(models, &query);
+            if filtered.is_empty() && filter_is_active(&query) {
+                chrome::render_filter_empty(frame, area, &query);
                 return;
             }
-            match app.current_view() {
+            let selected = table_state
+                .get(&board)
+                .and_then(TableState::selected)
+                .unwrap_or(0);
+            match view {
                 View::Table => {
-                    let selected = selected_index(app, board);
                     let (table_area, detail_area) = split_body(area);
-                    render_aa_table(frame, table_area, &models, app, board);
+                    aa_board::render_aa_table(
+                        frame,
+                        table_area,
+                        &filtered,
+                        table_state,
+                        board,
+                        aa_sort_key,
+                    );
                     if let Some(detail_area) = detail_area {
-                        render_aa_detail(frame, detail_area, models.get(selected));
+                        aa_board::render_aa_detail(frame, detail_area, filtered.get(selected));
                     }
                 }
-                View::Chart => render_aa_chart(frame, area, &models, app),
+                View::Chart => aa_board::render_aa_chart(frame, area, &filtered, app),
             }
         }
         Some(Status::Loaded(Data::AaAgents(rows))) => {
-            let rows = filter_agent_rows(&rows, &query);
-            if rows.is_empty() && filter_is_active(&query) {
-                render_filter_empty(frame, area, &query);
+            let filtered = filter_agent_rows(rows, &query);
+            if filtered.is_empty() && filter_is_active(&query) {
+                chrome::render_filter_empty(frame, area, &query);
                 return;
             }
-            match app.current_view() {
+            let selected = table_state
+                .get(&board)
+                .and_then(TableState::selected)
+                .unwrap_or(0);
+            match view {
                 View::Table => {
-                    let selected = selected_index(app, board);
                     let (table_area, radar_area) = split_agents_table_body(area);
-                    render_agents_table(frame, table_area, &rows, app, board);
+                    agents::render_agents_table(
+                        frame,
+                        table_area,
+                        &filtered,
+                        table_state,
+                        board,
+                        agent_sort_key,
+                    );
                     if let Some(radar_area) = radar_area {
-                        render_agents_radar_panel(frame, radar_area, &rows, selected);
+                        agents::render_agents_radar_panel(frame, radar_area, &filtered, selected);
                     }
                 }
-                View::Chart => render_agents_chart(frame, area, &rows, app),
+                View::Chart => agents::render_agents_chart(frame, area, &filtered, app),
             }
         }
         Some(Status::Loaded(Data::Arena(entries))) => {
-            let entries = filter_arena_entries(&entries, &query);
-            if entries.is_empty() && filter_is_active(&query) {
-                render_filter_empty(frame, area, &query);
+            let filtered = filter_arena_entries(entries, &query);
+            if filtered.is_empty() && filter_is_active(&query) {
+                chrome::render_filter_empty(frame, area, &query);
                 return;
             }
-            match app.current_view() {
+            let selected = table_state
+                .get(&board)
+                .and_then(TableState::selected)
+                .unwrap_or(0);
+            match view {
                 View::Table => {
-                    let selected = selected_index(app, board);
                     let (table_area, detail_area) = split_body(area);
-                    render_arena_table(frame, table_area, &entries, app, board);
+                    let kind = match board {
+                        Board::Arena(s) => s.kind(),
+                        _ => arena::Kind::Text,
+                    };
+                    arena_board::render_arena_table(
+                        frame,
+                        table_area,
+                        &filtered,
+                        table_state,
+                        board,
+                        arena_sort_key,
+                        kind,
+                    );
                     if let Some(detail_area) = detail_area {
-                        render_arena_detail(frame, detail_area, entries.get(selected), board);
+                        arena_board::render_arena_detail(
+                            frame,
+                            detail_area,
+                            filtered.get(selected),
+                            board,
+                        );
                     }
                 }
-                View::Chart => render_arena_chart(frame, area, &entries, app, board),
+                View::Chart => arena_board::render_arena_chart(frame, area, &filtered, app, board),
             }
         }
         Some(Status::Error(e)) => {
-            let p = Paragraph::new(format!("error: {e}\n\npress r to retry"))
-                .style(Style::default().fg(Color::Red))
-                .block(Block::default().borders(Borders::ALL).title("Leaderboard"))
-                .wrap(Wrap { trim: true });
-            frame.render_widget(p, area);
+            chrome::render_error(frame, area, e);
         }
         Some(Status::Loading) | None => {
-            let p = Paragraph::new("loading leaderboard data...")
-                .style(Style::default().fg(Color::Yellow))
-                .block(Block::default().borders(Borders::ALL).title("Leaderboard"));
-            frame.render_widget(p, area);
+            chrome::render_loading(frame, area);
         }
     }
-}
-
-fn render_filter_empty(frame: &mut Frame, area: Rect, query: &str) {
-    let p = Paragraph::new(format!(
-        "no rows match filter: {}\n\npress / to edit or Ctrl-U to clear",
-        truncate(query, 48)
-    ))
-    .style(Style::default().fg(Color::Yellow))
-    .block(Block::default().borders(Borders::ALL).title("Leaderboard"))
-    .wrap(Wrap { trim: true });
-    frame.render_widget(p, area);
 }
 
 fn selected_index(app: &AppState, board: Board) -> usize {
@@ -891,132 +729,10 @@ fn split_agents_table_body(area: Rect) -> (Rect, Option<Rect>) {
     (chunks[0], Some(chunks[1]))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AaColumn {
-    Index,
-    Model,
-    Provider,
-    Intelligence,
-    Speed,
-    Price,
-    Context,
-    Released,
-    Open,
-}
-
-impl AaColumn {
-    fn header(self) -> &'static str {
-        match self {
-            AaColumn::Index => "#",
-            AaColumn::Model => "Model",
-            AaColumn::Provider => "Provider",
-            AaColumn::Intelligence => "Intel",
-            AaColumn::Speed => "t/s",
-            AaColumn::Price => "$/M",
-            AaColumn::Context => "Ctx",
-            AaColumn::Released => "Release",
-            AaColumn::Open => "Open",
-        }
-    }
-
-    fn width(self) -> Constraint {
-        match self {
-            AaColumn::Index => Constraint::Length(3),
-            AaColumn::Model => Constraint::Min(12),
-            AaColumn::Provider => Constraint::Length(11),
-            AaColumn::Intelligence => Constraint::Length(6),
-            AaColumn::Speed => Constraint::Length(6),
-            AaColumn::Price => Constraint::Length(7),
-            AaColumn::Context => Constraint::Length(7),
-            AaColumn::Released => Constraint::Length(10),
-            AaColumn::Open => Constraint::Length(5),
-        }
-    }
-
-    fn order(self) -> u8 {
-        match self {
-            AaColumn::Index => 0,
-            AaColumn::Model => 1,
-            AaColumn::Provider => 2,
-            AaColumn::Intelligence => 3,
-            AaColumn::Speed => 4,
-            AaColumn::Price => 5,
-            AaColumn::Context => 6,
-            AaColumn::Released => 7,
-            AaColumn::Open => 8,
-        }
-    }
-}
-
-fn aa_columns(width: u16, sort_key: AaKey) -> Vec<AaColumn> {
-    let mut columns = vec![
-        AaColumn::Index,
-        AaColumn::Model,
-        AaColumn::Intelligence,
-        AaColumn::Price,
-    ];
-    push_unique(&mut columns, aa_column_for_key(sort_key));
-    if width >= 62 {
-        push_unique(&mut columns, AaColumn::Provider);
-    }
-    if width >= 74 {
-        push_unique(&mut columns, AaColumn::Context);
-    }
-    if width >= 84 {
-        push_unique(&mut columns, AaColumn::Speed);
-    }
-    if width >= 98 {
-        push_unique(&mut columns, AaColumn::Open);
-    }
-    if width >= 110 {
-        push_unique(&mut columns, AaColumn::Released);
-    }
-    columns.sort_by_key(|column| column.order());
-    columns
-}
-
-fn aa_column_for_key(key: AaKey) -> AaColumn {
-    match key {
-        AaKey::Intelligence => AaColumn::Intelligence,
-        AaKey::Speed => AaColumn::Speed,
-        AaKey::Price => AaColumn::Price,
-        AaKey::Context => AaColumn::Context,
-    }
-}
-
 fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
     if !items.contains(&item) {
         items.push(item);
     }
-}
-
-fn render_aa_table(
-    frame: &mut Frame,
-    area: Rect,
-    models: &[aa::Model],
-    app: &mut AppState,
-    board: Board,
-) {
-    let columns = aa_columns(area.width, app.aa_sort.key);
-    let header = Row::new(columns.iter().map(|column| header_cell(column.header())));
-
-    let rows = models
-        .iter()
-        .enumerate()
-        .map(|(i, m)| Row::new(columns.iter().map(|column| aa_cell(*column, i, m))));
-
-    let widths: Vec<Constraint> = columns.iter().map(|column| column.width()).collect();
-    let title = format!("AA models ({})", models.len());
-
-    let table = Table::new(rows, widths)
-        .header(header.height(1))
-        .row_highlight_style(selected_row_style())
-        .highlight_symbol("> ")
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .column_spacing(1);
-
-    let st = app.table_state.entry(board).or_default();
-    frame.render_stateful_widget(table, area, st);
 }
 
 fn header_cell(label: &str) -> Cell<'_> {
@@ -1030,995 +746,6 @@ fn header_cell(label: &str) -> Cell<'_> {
 
 fn selected_row_style() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
-}
-
-fn aa_cell(column: AaColumn, index: usize, model: &aa::Model) -> Cell<'static> {
-    match column {
-        AaColumn::Index => {
-            Cell::from(format!("{:>2}", index + 1)).style(Style::default().fg(Color::DarkGray))
-        }
-        AaColumn::Model => Cell::from(model.name.clone()).style(Style::default().bold()),
-        AaColumn::Provider => {
-            Cell::from(model.provider().to_string()).style(Style::default().fg(Color::Magenta))
-        }
-        AaColumn::Intelligence => Cell::from(fmt_f(model.intelligence_index, 1))
-            .style(score_color(model.intelligence_index, 30.0, 60.0)),
-        AaColumn::Speed => {
-            Cell::from(fmt_f(model.speed(), 0)).style(Style::default().fg(Color::Blue))
-        }
-        AaColumn::Price => Cell::from(fmt_f(model.price_1m_blended_3_to_1, 2))
-            .style(price_color(model.price_1m_blended_3_to_1)),
-        AaColumn::Context => Cell::from(
-            model
-                .context_window_tokens
-                .map(fmt_tokens)
-                .unwrap_or_else(|| "-".into()),
-        ),
-        AaColumn::Released => Cell::from(model.release_date.clone().unwrap_or_else(|| "-".into()))
-            .style(Style::default().fg(Color::DarkGray)),
-        AaColumn::Open => Cell::from(if model.is_open_weights == Some(true) {
-            "yes"
-        } else {
-            ""
-        })
-        .style(Style::default().fg(Color::Green)),
-    }
-}
-
-fn render_aa_detail(frame: &mut Frame, area: Rect, model: Option<&aa::Model>) {
-    let max = area.width.saturating_sub(4) as usize;
-    let lines = match model {
-        Some(model) => vec![
-            Line::styled(
-                truncate(&model.name, max.max(8)),
-                Style::default().fg(Color::Cyan).bold(),
-            ),
-            Line::from(""),
-            detail_line(
-                "Provider",
-                model.provider(),
-                Style::default().fg(Color::Magenta),
-            ),
-            detail_line(
-                "Intel",
-                fmt_f(model.intelligence_index, 1),
-                score_color(model.intelligence_index, 30.0, 60.0),
-            ),
-            detail_line(
-                "Speed",
-                format!("{} t/s", fmt_f(model.speed(), 0)),
-                Style::default().fg(Color::Blue),
-            ),
-            detail_line(
-                "Price",
-                fmt_price(model.price_1m_blended_3_to_1, 2, "/M"),
-                price_color(model.price_1m_blended_3_to_1),
-            ),
-            detail_line(
-                "Context",
-                model
-                    .context_window_tokens
-                    .map(fmt_tokens)
-                    .unwrap_or_else(|| "-".into()),
-                Style::default(),
-            ),
-            detail_line(
-                "Release",
-                model.release_date.clone().unwrap_or_else(|| "-".into()),
-                Style::default().fg(Color::Gray),
-            ),
-            detail_line(
-                "Weights",
-                match model.is_open_weights {
-                    Some(true) => "open",
-                    Some(false) => "closed",
-                    None => "-",
-                },
-                Style::default().fg(Color::Green),
-            ),
-        ],
-        None => vec![Line::styled(
-            "No row selected",
-            Style::default().fg(Color::DarkGray),
-        )],
-    };
-
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Selected"))
-        .wrap(Wrap { trim: true });
-    frame.render_widget(p, area);
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AgentColumn {
-    Index,
-    Agent,
-    Model,
-    Provider,
-    Score,
-    Pass,
-    Cost,
-    Time,
-    Tokens,
-    Turns,
-    Released,
-}
-
-impl AgentColumn {
-    fn header(self) -> &'static str {
-        match self {
-            AgentColumn::Index => "#",
-            AgentColumn::Agent => "Agent",
-            AgentColumn::Model => "Model",
-            AgentColumn::Provider => "Provider",
-            AgentColumn::Score => "Index",
-            AgentColumn::Pass => "Pass@1",
-            AgentColumn::Cost => "Cost",
-            AgentColumn::Time => "Time",
-            AgentColumn::Tokens => "Tokens",
-            AgentColumn::Turns => "Turns",
-            AgentColumn::Released => "Release",
-        }
-    }
-
-    fn width(self) -> Constraint {
-        match self {
-            AgentColumn::Index => Constraint::Length(3),
-            AgentColumn::Agent => Constraint::Min(12),
-            AgentColumn::Model => Constraint::Length(24),
-            AgentColumn::Provider => Constraint::Length(12),
-            AgentColumn::Score => Constraint::Length(7),
-            AgentColumn::Pass => Constraint::Length(7),
-            AgentColumn::Cost => Constraint::Length(8),
-            AgentColumn::Time => Constraint::Length(8),
-            AgentColumn::Tokens => Constraint::Length(8),
-            AgentColumn::Turns => Constraint::Length(6),
-            AgentColumn::Released => Constraint::Length(10),
-        }
-    }
-
-    fn order(self) -> u8 {
-        match self {
-            AgentColumn::Index => 0,
-            AgentColumn::Agent => 1,
-            AgentColumn::Model => 2,
-            AgentColumn::Provider => 3,
-            AgentColumn::Score => 4,
-            AgentColumn::Pass => 5,
-            AgentColumn::Cost => 6,
-            AgentColumn::Time => 7,
-            AgentColumn::Tokens => 8,
-            AgentColumn::Turns => 9,
-            AgentColumn::Released => 10,
-        }
-    }
-}
-
-fn agent_columns(width: u16, sort_key: AgentKey) -> Vec<AgentColumn> {
-    let mut columns = vec![
-        AgentColumn::Index,
-        AgentColumn::Agent,
-        AgentColumn::Score,
-        AgentColumn::Pass,
-        AgentColumn::Cost,
-    ];
-    push_unique(&mut columns, agent_column_for_key(sort_key));
-    if width >= 62 {
-        push_unique(&mut columns, AgentColumn::Model);
-    }
-    if width >= 76 {
-        push_unique(&mut columns, AgentColumn::Provider);
-    }
-    if width >= 88 {
-        push_unique(&mut columns, AgentColumn::Time);
-    }
-    if width >= 100 {
-        push_unique(&mut columns, AgentColumn::Tokens);
-    }
-    if width >= 110 {
-        push_unique(&mut columns, AgentColumn::Turns);
-    }
-    if width >= 122 {
-        push_unique(&mut columns, AgentColumn::Released);
-    }
-    columns.sort_by_key(|column| column.order());
-    columns
-}
-
-fn agent_column_for_key(key: AgentKey) -> AgentColumn {
-    match key {
-        AgentKey::Index => AgentColumn::Score,
-        AgentKey::Pass => AgentColumn::Pass,
-        AgentKey::Cost => AgentColumn::Cost,
-        AgentKey::Time => AgentColumn::Time,
-        AgentKey::Tokens => AgentColumn::Tokens,
-        AgentKey::Turns => AgentColumn::Turns,
-    }
-}
-
-fn render_agents_table(
-    frame: &mut Frame,
-    area: Rect,
-    rows: &[coding_agents::AgentRow],
-    app: &mut AppState,
-    board: Board,
-) {
-    let columns = agent_columns(area.width, app.agent_sort.key);
-    let header = Row::new(columns.iter().map(|column| header_cell(column.header())));
-
-    let table_rows = rows
-        .iter()
-        .enumerate()
-        .map(|(i, row)| Row::new(columns.iter().map(|column| agent_cell(*column, i, row))));
-
-    let widths: Vec<Constraint> = columns.iter().map(|column| column.width()).collect();
-    let title = format!("AA coding agents ({})", rows.len());
-
-    let table = Table::new(table_rows, widths)
-        .header(header.height(1))
-        .row_highlight_style(selected_row_style())
-        .highlight_symbol("> ")
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .column_spacing(1);
-
-    let st = app.table_state.entry(board).or_default();
-    frame.render_stateful_widget(table, area, st);
-}
-
-fn agent_cell(column: AgentColumn, index: usize, row: &coding_agents::AgentRow) -> Cell<'static> {
-    match column {
-        AgentColumn::Index => {
-            Cell::from(format!("{:>2}", index + 1)).style(Style::default().fg(Color::DarkGray))
-        }
-        AgentColumn::Agent => Cell::from(row.agent().to_string()).style(agent_name_style(row)),
-        AgentColumn::Model => Cell::from(row.model().to_string()),
-        AgentColumn::Provider => {
-            Cell::from(row.provider().to_string()).style(Style::default().fg(Color::Magenta))
-        }
-        AgentColumn::Score => {
-            Cell::from(fmt_pct(row.index_score, 1)).style(score_color_pct(row.index_score))
-        }
-        AgentColumn::Pass => {
-            Cell::from(fmt_pct(row.mean.reward, 1)).style(score_color_pct(row.mean.reward))
-        }
-        AgentColumn::Cost => {
-            Cell::from(fmt_price(row.mean.cost_usd, 2, "")).style(price_color(row.mean.cost_usd))
-        }
-        AgentColumn::Time => Cell::from(fmt_duration(row.mean.agent_wall_time_sec))
-            .style(Style::default().fg(Color::Blue)),
-        AgentColumn::Tokens => Cell::from(fmt_compact_f(row.mean.total_tokens)),
-        AgentColumn::Turns => Cell::from(fmt_f(row.mean.steps, 1)),
-        AgentColumn::Released => Cell::from(row.release_date.clone().unwrap_or_else(|| "-".into()))
-            .style(Style::default().fg(Color::DarkGray)),
-    }
-}
-
-const RADAR_LIMIT: usize = 5;
-const RADAR_AXIS_COUNT: usize = 6;
-const CLAUDE_CODE_COLOR: Color = Color::Rgb(255, 165, 0);
-const CODEX_COLOR: Color = Color::Rgb(0xbe, 0xa5, 0xff);
-const GEMINI_COLOR: Color = Color::Rgb(0x42, 0x85, 0xf4);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RadarMetric {
-    Index,
-    Pass,
-    Cost,
-    Time,
-    Tokens,
-    Turns,
-}
-
-impl RadarMetric {
-    const ALL: [RadarMetric; RADAR_AXIS_COUNT] = [
-        RadarMetric::Index,
-        RadarMetric::Pass,
-        RadarMetric::Cost,
-        RadarMetric::Time,
-        RadarMetric::Tokens,
-        RadarMetric::Turns,
-    ];
-
-    fn value(self, row: &coding_agents::AgentRow) -> Option<f64> {
-        match self {
-            RadarMetric::Index => row.index_score,
-            RadarMetric::Pass => row.mean.reward,
-            RadarMetric::Cost => row.mean.cost_usd,
-            RadarMetric::Time => row.mean.agent_wall_time_sec,
-            RadarMetric::Tokens => row.mean.total_tokens,
-            RadarMetric::Turns => row.mean.steps,
-        }
-    }
-
-    fn preference(self) -> ChartPreference {
-        match self {
-            RadarMetric::Cost | RadarMetric::Time | RadarMetric::Tokens | RadarMetric::Turns => {
-                ChartPreference::Lower
-            }
-            RadarMetric::Index | RadarMetric::Pass => ChartPreference::Higher,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RadarScale {
-    bounds: [Option<(f64, f64)>; RADAR_AXIS_COUNT],
-}
-
-#[derive(Debug, Clone)]
-struct RadarSeries {
-    color: Color,
-    values: [f64; RADAR_AXIS_COUNT],
-}
-
-fn radar_scale(rows: &[coding_agents::AgentRow]) -> RadarScale {
-    let mut bounds = [None; RADAR_AXIS_COUNT];
-    for (i, metric) in RadarMetric::ALL.iter().enumerate() {
-        bounds[i] = radar_metric_bounds(rows, *metric);
-    }
-    RadarScale { bounds }
-}
-
-fn radar_metric_bounds(
-    rows: &[coding_agents::AgentRow],
-    metric: RadarMetric,
-) -> Option<(f64, f64)> {
-    let mut min = f64::INFINITY;
-    let mut max = f64::NEG_INFINITY;
-    let mut found = false;
-
-    for row in rows {
-        let Some(value) = metric.value(row).filter(|value| value.is_finite()) else {
-            continue;
-        };
-        min = min.min(value);
-        max = max.max(value);
-        found = true;
-    }
-
-    found.then_some((min, max))
-}
-
-fn radar_normalized_value(
-    value: Option<f64>,
-    bounds: Option<(f64, f64)>,
-    preference: ChartPreference,
-) -> f64 {
-    let Some(value) = value.filter(|value| value.is_finite()) else {
-        return 0.0;
-    };
-    let Some((min, max)) = bounds else {
-        return 0.0;
-    };
-    if (max - min).abs() < f64::EPSILON {
-        return 1.0;
-    }
-
-    let normalized = match preference {
-        ChartPreference::Higher => (value - min) / (max - min),
-        ChartPreference::Lower => (max - value) / (max - min),
-    };
-    normalized.clamp(0.0, 1.0)
-}
-
-fn radar_values(row: &coding_agents::AgentRow, scale: &RadarScale) -> [f64; RADAR_AXIS_COUNT] {
-    let mut values = [0.0; RADAR_AXIS_COUNT];
-    for (i, metric) in RadarMetric::ALL.iter().enumerate() {
-        values[i] = radar_normalized_value(metric.value(row), scale.bounds[i], metric.preference());
-    }
-    values
-}
-
-fn radar_series(rows: &[coding_agents::AgentRow], limit: usize) -> Vec<RadarSeries> {
-    let scale = radar_scale(rows);
-    rows.iter()
-        .take(limit)
-        .map(|row| RadarSeries {
-            color: agent_series_color(row),
-            values: radar_values(row, &scale),
-        })
-        .collect()
-}
-
-fn render_agents_radar_panel(
-    frame: &mut Frame,
-    area: Rect,
-    rows: &[coding_agents::AgentRow],
-    selected: usize,
-) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(8), Constraint::Length(10)])
-        .split(area);
-
-    render_agents_radar_canvas(frame, chunks[0], rows);
-    render_agents_radar_legend(frame, chunks[1], rows, selected);
-}
-
-fn render_agents_radar_canvas(frame: &mut Frame, area: Rect, rows: &[coding_agents::AgentRow]) {
-    let series = radar_series(rows, RADAR_LIMIT);
-    if series.is_empty() {
-        let p = Paragraph::new("no radar data")
-            .style(Style::default().fg(Color::Yellow))
-            .block(Block::default().borders(Borders::ALL).title("Radar"));
-        frame.render_widget(p, area);
-        return;
-    }
-
-    let canvas = Canvas::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Radar")
-                .title_bottom("top 5 visible"),
-        )
-        .x_bounds([-1.15, 1.15])
-        .y_bounds([-1.15, 1.15])
-        .marker(Marker::Braille)
-        .paint(|ctx| {
-            for ring in [0.33, 0.66, 1.0] {
-                let points = radar_polygon_points([ring; RADAR_AXIS_COUNT]);
-                let color = if ring >= 1.0 {
-                    Color::Gray
-                } else {
-                    Color::DarkGray
-                };
-                draw_canvas_polygon(ctx, &points, color);
-            }
-
-            for axis in 0..RADAR_AXIS_COUNT {
-                let (x, y) = radar_point(axis, 1.0);
-                ctx.draw(&CanvasLine::new(0.0, 0.0, x, y, Color::DarkGray));
-            }
-
-            for series in &series {
-                let points = radar_polygon_points(series.values);
-                draw_canvas_polygon(ctx, &points, series.color);
-                ctx.draw(&Points {
-                    coords: &points,
-                    color: series.color,
-                });
-            }
-        });
-
-    frame.render_widget(canvas, area);
-}
-
-fn render_agents_radar_legend(
-    frame: &mut Frame,
-    area: Rect,
-    rows: &[coding_agents::AgentRow],
-    selected: usize,
-) {
-    let max = area.width.saturating_sub(4) as usize;
-    let mut lines = vec![Line::styled(
-        "Top visible",
-        Style::default().fg(Color::DarkGray),
-    )];
-
-    for (i, row) in rows.iter().take(RADAR_LIMIT).enumerate() {
-        let marker = if i == selected { "*" } else { " " };
-        lines.push(Line::styled(
-            format!(
-                "{marker}{:>1}. {}",
-                i + 1,
-                truncate(&row.label(), max.saturating_sub(4))
-            ),
-            Style::default().fg(agent_series_color(row)),
-        ));
-    }
-
-    if let Some(row) = rows.get(selected) {
-        lines.push(Line::from(vec![
-            Span::styled("Sel ", Style::default().fg(Color::Yellow).bold()),
-            Span::styled(
-                truncate(&row.label(), max.saturating_sub(4)),
-                Style::default().fg(Color::Cyan).bold(),
-            ),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("Idx ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                fmt_pct(row.index_score, 1),
-                score_color_pct(row.index_score),
-            ),
-            Span::raw("  Pass "),
-            Span::styled(
-                fmt_pct(row.mean.reward, 1),
-                score_color_pct(row.mean.reward),
-            ),
-        ]));
-    }
-
-    let p = Paragraph::new(lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Legend: Index/Pass/Cost/Time/Tok/Turns"),
-        )
-        .wrap(Wrap { trim: true });
-    frame.render_widget(p, area);
-}
-
-fn radar_polygon_points(values: [f64; RADAR_AXIS_COUNT]) -> Vec<(f64, f64)> {
-    values
-        .into_iter()
-        .enumerate()
-        .map(|(axis, value)| radar_point(axis, value))
-        .collect()
-}
-
-fn radar_point(axis: usize, value: f64) -> (f64, f64) {
-    let angle = -std::f64::consts::FRAC_PI_2
-        + (axis as f64) * (std::f64::consts::PI * 2.0) / (RADAR_AXIS_COUNT as f64);
-    (angle.cos() * value, angle.sin() * value)
-}
-
-fn draw_canvas_polygon(ctx: &mut CanvasContext<'_>, points: &[(f64, f64)], color: Color) {
-    if points.is_empty() {
-        return;
-    }
-    for i in 0..points.len() {
-        let (x1, y1) = points[i];
-        let (x2, y2) = points[(i + 1) % points.len()];
-        ctx.draw(&CanvasLine::new(x1, y1, x2, y2, color));
-    }
-}
-
-fn detail_line(label: &str, value: impl Into<String>, style: Style) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label:<9}"), Style::default().fg(Color::DarkGray)),
-        Span::styled(value.into(), style),
-    ])
-}
-
-fn render_aa_chart(frame: &mut Frame, area: Rect, models: &[aa::Model], app: &AppState) {
-    let key = app.aa_sort.key;
-    let (chart_area, summary_area) = split_chart_body(area);
-    let max_bars = chart_capacity(chart_area);
-    let rows: Vec<ChartRow> = models
-        .iter()
-        .filter_map(|m| {
-            let value = aa_metric(m, key)?;
-            Some(ChartRow {
-                name: m.name.clone(),
-                meta: m.provider().to_string(),
-                value,
-                value_label: aa_chart_text_value(m, key),
-                color: None,
-                color_seed: m.id.clone(),
-            })
-        })
-        .take(max_bars)
-        .collect();
-
-    let title = format!(
-        "AA chart - {} {} (top {}/{})",
-        aa_key_label(key),
-        app.aa_sort.dir.arrow(),
-        rows.len(),
-        models.len(),
-    );
-    let empty = format!(
-        "no data for {} - switch sort key (i/s/p/c) or press m for table",
-        aa_key_label(key)
-    );
-    let preference = aa_chart_preference(key);
-    render_metric_chart(frame, chart_area, &title, &empty, &rows, preference);
-
-    if let Some(summary_area) = summary_area {
-        render_chart_summary(
-            frame,
-            summary_area,
-            &rows,
-            models.len(),
-            aa_key_label(key),
-            preference,
-        );
-    }
-}
-
-fn render_agents_chart(
-    frame: &mut Frame,
-    area: Rect,
-    rows: &[coding_agents::AgentRow],
-    app: &AppState,
-) {
-    let key = app.agent_sort.key;
-    let (chart_area, summary_area) = split_chart_body(area);
-    let max_bars = chart_capacity(chart_area);
-    let chart_rows: Vec<ChartRow> = rows
-        .iter()
-        .filter_map(|row| {
-            let value = agent_metric(row, key)?;
-            Some(ChartRow {
-                name: row.label(),
-                meta: row.provider().to_string(),
-                value,
-                value_label: agent_chart_text_value(row, key),
-                color: Some(agent_series_color(row)),
-                color_seed: row.id.clone(),
-            })
-        })
-        .take(max_bars)
-        .collect();
-
-    let title = format!(
-        "AA Agents chart - {} {} (top {}/{})",
-        agent_key_label(key),
-        app.agent_sort.dir.arrow(),
-        chart_rows.len(),
-        rows.len(),
-    );
-    let empty = format!(
-        "no data for {} - switch sort key (i/a/p/t/u/s) or press m for table",
-        agent_key_label(key)
-    );
-    let preference = agent_chart_preference(key);
-    render_metric_chart(frame, chart_area, &title, &empty, &chart_rows, preference);
-
-    if let Some(summary_area) = summary_area {
-        render_chart_summary(
-            frame,
-            summary_area,
-            &chart_rows,
-            rows.len(),
-            agent_key_label(key),
-            preference,
-        );
-    }
-}
-
-fn render_arena_chart(
-    frame: &mut Frame,
-    area: Rect,
-    entries: &[arena::Entry],
-    app: &AppState,
-    board: Board,
-) {
-    let key = app.arena_sort.key;
-    let kind = match board {
-        Board::Arena(s) => s.kind(),
-        _ => arena::Kind::Text,
-    };
-    let (chart_area, summary_area) = split_chart_body(area);
-    let max_bars = chart_capacity(chart_area);
-    let rows: Vec<ChartRow> = entries
-        .iter()
-        .filter_map(|entry| {
-            let value = arena_metric(entry, key)?;
-            let meta = entry.organization.clone().unwrap_or_else(|| "-".into());
-            Some(ChartRow {
-                name: entry.name.clone(),
-                meta: meta.clone(),
-                value,
-                value_label: arena_chart_text_value(entry, key, kind),
-                color: None,
-                color_seed: format!("{}:{meta}", entry.name),
-            })
-        })
-        .take(max_bars)
-        .collect();
-
-    let title = format!(
-        "{} chart - {} {} (top {}/{})",
-        board.label(),
-        arena_key_label(key),
-        app.arena_sort.dir.arrow(),
-        rows.len(),
-        entries.len(),
-    );
-    let empty = format!(
-        "no data for {} - switch sort key (n/i/v/p/c) or press m for table",
-        arena_key_label(key)
-    );
-    let preference = arena_chart_preference(key);
-    render_metric_chart(frame, chart_area, &title, &empty, &rows, preference);
-
-    if let Some(summary_area) = summary_area {
-        render_chart_summary(
-            frame,
-            summary_area,
-            &rows,
-            entries.len(),
-            arena_key_label(key),
-            preference,
-        );
-    }
-}
-
-#[derive(Debug, Clone)]
-struct ChartRow {
-    name: String,
-    meta: String,
-    value: f64,
-    value_label: String,
-    color: Option<Color>,
-    color_seed: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ChartPreference {
-    Higher,
-    Lower,
-}
-
-impl ChartPreference {
-    fn hint(self) -> &'static str {
-        match self {
-            ChartPreference::Higher => "higher is better",
-            ChartPreference::Lower => "lower is better",
-        }
-    }
-}
-
-fn split_chart_body(area: Rect) -> (Rect, Option<Rect>) {
-    if area.width < 118 || area.height < 12 {
-        return (area, None);
-    }
-
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(72), Constraint::Length(34)])
-        .split(area);
-    (chunks[0], Some(chunks[1]))
-}
-
-fn chart_capacity(area: Rect) -> usize {
-    (area.height as usize).saturating_sub(2).max(1)
-}
-
-fn render_metric_chart(
-    frame: &mut Frame,
-    area: Rect,
-    title: &str,
-    empty: &str,
-    rows: &[ChartRow],
-    preference: ChartPreference,
-) {
-    if rows.is_empty() {
-        let p = Paragraph::new(empty.to_string())
-            .style(Style::default().fg(Color::Yellow))
-            .block(Block::default().borders(Borders::ALL).title("Chart"))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(p, area);
-        return;
-    }
-
-    let (min, max) = chart_bounds(rows);
-    let label_width = (area.width as usize).saturating_sub(24).clamp(10, 34);
-    let bars: Vec<Bar> = rows
-        .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let scaled = chart_bar_value(row.value, min, max, preference);
-            let label = format!("{:>2}. {}", i + 1, truncate(&row.name, label_width));
-            let color = row.color.unwrap_or_else(|| color_for_seed(&row.color_seed));
-            Bar::default()
-                .label(Line::from(label))
-                .value(scaled)
-                .text_value(row.value_label.clone())
-                .style(Style::default().fg(color))
-                .value_style(Style::default().fg(Color::Black).bg(color))
-        })
-        .collect();
-
-    let chart = BarChart::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_bottom(preference.hint()),
-        )
-        .data(BarGroup::default().bars(&bars))
-        .direction(Direction::Horizontal)
-        .bar_width(1)
-        .bar_gap(0)
-        .label_style(Style::default().fg(Color::Gray));
-
-    frame.render_widget(chart, area);
-}
-
-fn render_chart_summary(
-    frame: &mut Frame,
-    area: Rect,
-    rows: &[ChartRow],
-    total: usize,
-    metric: &str,
-    preference: ChartPreference,
-) {
-    let lines = if let Some(lead) = rows.first() {
-        let (min, max) = chart_bounds(rows);
-        vec![
-            detail_line("Metric", metric, Style::default().fg(Color::Cyan).bold()),
-            detail_line("Mode", preference.hint(), Style::default().fg(Color::Gray)),
-            detail_line(
-                "Shown",
-                format!("{}/{}", rows.len(), total),
-                Style::default().fg(Color::Green),
-            ),
-            Line::from(""),
-            Line::styled("Top row", Style::default().fg(Color::DarkGray)),
-            Line::styled(
-                truncate(&lead.name, area.width.saturating_sub(4) as usize),
-                Style::default().fg(Color::Cyan).bold(),
-            ),
-            detail_line(
-                "Value",
-                lead.value_label.clone(),
-                Style::default().fg(Color::Yellow),
-            ),
-            detail_line(
-                "Group",
-                lead.meta.clone(),
-                Style::default().fg(Color::Magenta),
-            ),
-            Line::from(""),
-            detail_line(
-                "Range",
-                format!(
-                    "{} - {}",
-                    format_chart_number(min),
-                    format_chart_number(max)
-                ),
-                Style::default().fg(Color::Gray),
-            ),
-        ]
-    } else {
-        vec![Line::styled(
-            "No chartable rows",
-            Style::default().fg(Color::DarkGray),
-        )]
-    };
-
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Chart stats"))
-        .wrap(Wrap { trim: true });
-    frame.render_widget(p, area);
-}
-
-fn chart_bounds(rows: &[ChartRow]) -> (f64, f64) {
-    rows.iter()
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), row| {
-            (min.min(row.value), max.max(row.value))
-        })
-}
-
-fn chart_bar_value(value: f64, min: f64, max: f64, preference: ChartPreference) -> u64 {
-    if !min.is_finite() || !max.is_finite() || (max - min).abs() < f64::EPSILON {
-        return 1000;
-    }
-
-    let normalized = match preference {
-        ChartPreference::Higher => (value - min) / (max - min),
-        ChartPreference::Lower => (max - value) / (max - min),
-    };
-    (normalized.clamp(0.0, 1.0) * 999.0).round() as u64 + 1
-}
-
-fn aa_chart_preference(key: AaKey) -> ChartPreference {
-    match key {
-        AaKey::Price => ChartPreference::Lower,
-        AaKey::Intelligence | AaKey::Speed | AaKey::Context => ChartPreference::Higher,
-    }
-}
-
-fn agent_chart_preference(key: AgentKey) -> ChartPreference {
-    match key {
-        AgentKey::Cost | AgentKey::Time | AgentKey::Tokens | AgentKey::Turns => {
-            ChartPreference::Lower
-        }
-        AgentKey::Index | AgentKey::Pass => ChartPreference::Higher,
-    }
-}
-
-fn arena_chart_preference(key: ArenaKey) -> ChartPreference {
-    match key {
-        ArenaKey::Rank | ArenaKey::Price => ChartPreference::Lower,
-        ArenaKey::Rating | ArenaKey::Votes | ArenaKey::Context => ChartPreference::Higher,
-    }
-}
-
-fn aa_chart_text_value(m: &aa::Model, key: AaKey) -> String {
-    match key {
-        AaKey::Intelligence => fmt_f(m.intelligence_index, 1),
-        AaKey::Speed => format!("{} t/s", fmt_f(m.speed(), 0)),
-        AaKey::Price => format!("${}", fmt_f(m.price_1m_blended_3_to_1, 2)),
-        AaKey::Context => m
-            .context_window_tokens
-            .map(fmt_tokens)
-            .unwrap_or_else(|| "-".into()),
-    }
-}
-
-fn agent_chart_text_value(row: &coding_agents::AgentRow, key: AgentKey) -> String {
-    match key {
-        AgentKey::Index => fmt_pct(row.index_score, 1),
-        AgentKey::Pass => fmt_pct(row.mean.reward, 1),
-        AgentKey::Cost => fmt_price(row.mean.cost_usd, 2, "/task"),
-        AgentKey::Time => fmt_duration(row.mean.agent_wall_time_sec),
-        AgentKey::Tokens => fmt_compact_f(row.mean.total_tokens),
-        AgentKey::Turns => fmt_f(row.mean.steps, 1),
-    }
-}
-
-fn arena_chart_text_value(entry: &arena::Entry, key: ArenaKey, kind: arena::Kind) -> String {
-    match key {
-        ArenaKey::Rank => entry
-            .rank
-            .map(|rank| format!("#{rank}"))
-            .unwrap_or_else(|| "-".into()),
-        ArenaKey::Rating => fmt_f(entry.rating, 1),
-        ArenaKey::Votes => entry
-            .votes
-            .map(format_compact)
-            .unwrap_or_else(|| "-".into()),
-        ArenaKey::Price => match kind {
-            arena::Kind::Text => match (entry.input_price, entry.output_price) {
-                (Some(input), Some(output)) => format!("${input:.2}/${output:.2}"),
-                (Some(input), None) => format!("${input:.2} in"),
-                (None, Some(output)) => format!("${output:.2} out"),
-                (None, None) => "-".into(),
-            },
-            arena::Kind::Image => fmt_price(entry.price_per_image, 3, "/img"),
-            arena::Kind::Video => fmt_price(entry.price_per_second, 3, "/sec"),
-        },
-        ArenaKey::Context => entry
-            .context_length
-            .map(fmt_tokens)
-            .unwrap_or_else(|| "-".into()),
-    }
-}
-
-fn format_chart_number(value: f64) -> String {
-    if value.abs() >= 1_000_000.0 {
-        format!("{:.1}M", value / 1_000_000.0)
-    } else if value.abs() >= 10_000.0 {
-        format!("{:.1}K", value / 1_000.0)
-    } else if value.abs() >= 100.0 {
-        format!("{value:.0}")
-    } else if value.abs() >= 10.0 {
-        format!("{value:.1}")
-    } else {
-        format!("{value:.2}")
-    }
-}
-
-fn agent_name_style(row: &coding_agents::AgentRow) -> Style {
-    let style = Style::default().bold();
-    if let Some(color) = agent_brand_color(row) {
-        style.fg(color)
-    } else {
-        style
-    }
-}
-
-fn agent_brand_color(row: &coding_agents::AgentRow) -> Option<Color> {
-    if is_claude_code(row) {
-        Some(CLAUDE_CODE_COLOR)
-    } else if is_codex(row) {
-        Some(CODEX_COLOR)
-    } else if is_gemini(row) {
-        Some(GEMINI_COLOR)
-    } else {
-        None
-    }
-}
-
-fn agent_series_color(row: &coding_agents::AgentRow) -> Color {
-    agent_brand_color(row).unwrap_or_else(|| color_for_seed(&row.id))
-}
-
-fn is_claude_code(row: &coding_agents::AgentRow) -> bool {
-    row.agent().eq_ignore_ascii_case("claude code")
-}
-
-fn is_codex(row: &coding_agents::AgentRow) -> bool {
-    row.agent().eq_ignore_ascii_case("codex")
-}
-
-fn is_gemini(row: &coding_agents::AgentRow) -> bool {
-    row.agent().eq_ignore_ascii_case("gemini") || row.agent().eq_ignore_ascii_case("gemini cli")
 }
 
 fn color_for_seed(seed: &str) -> Color {
@@ -2052,6 +779,13 @@ fn truncate(s: &str, n: usize) -> String {
         out.push('…');
         out
     }
+}
+
+fn detail_line(label: &str, value: impl Into<String>, style: Style) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<10}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(value.into(), style),
+    ])
 }
 
 fn filter_is_active(query: &str) -> bool {
@@ -2102,42 +836,48 @@ fn count_matching_arena(entries: &[arena::Entry], query: &str) -> usize {
         .count()
 }
 
-fn filter_aa_models(models: &[aa::Model], query: &str) -> Vec<aa::Model> {
+fn filter_aa_models<'a>(models: &'a [aa::Model], query: &str) -> Cow<'a, [aa::Model]> {
     let tokens = filter_tokens(query);
     if tokens.is_empty() {
-        return models.to_vec();
+        return Cow::Borrowed(models);
     }
-    models
-        .iter()
-        .filter(|model| aa_matches_filter(model, &tokens))
-        .cloned()
-        .collect()
+    Cow::Owned(
+        models
+            .iter()
+            .filter(|model| aa_matches_filter(model, &tokens))
+            .cloned()
+            .collect(),
+    )
 }
 
-fn filter_agent_rows(
-    rows: &[coding_agents::AgentRow],
+fn filter_agent_rows<'a>(
+    rows: &'a [coding_agents::AgentRow],
     query: &str,
-) -> Vec<coding_agents::AgentRow> {
+) -> Cow<'a, [coding_agents::AgentRow]> {
     let tokens = filter_tokens(query);
     if tokens.is_empty() {
-        return rows.to_vec();
+        return Cow::Borrowed(rows);
     }
-    rows.iter()
-        .filter(|row| agent_matches_filter(row, &tokens))
-        .cloned()
-        .collect()
+    Cow::Owned(
+        rows.iter()
+            .filter(|row| agent_matches_filter(row, &tokens))
+            .cloned()
+            .collect(),
+    )
 }
 
-fn filter_arena_entries(entries: &[arena::Entry], query: &str) -> Vec<arena::Entry> {
+fn filter_arena_entries<'a>(entries: &'a [arena::Entry], query: &str) -> Cow<'a, [arena::Entry]> {
     let tokens = filter_tokens(query);
     if tokens.is_empty() {
-        return entries.to_vec();
+        return Cow::Borrowed(entries);
     }
-    entries
-        .iter()
-        .filter(|entry| arena_matches_filter(entry, &tokens))
-        .cloned()
-        .collect()
+    Cow::Owned(
+        entries
+            .iter()
+            .filter(|entry| arena_matches_filter(entry, &tokens))
+            .cloned()
+            .collect(),
+    )
 }
 
 fn filter_tokens(query: &str) -> Vec<String> {
@@ -2191,368 +931,9 @@ fn arena_matches_filter(entry: &arena::Entry, tokens: &[String]) -> bool {
     tokens.iter().all(|token| haystack.contains(token))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ArenaColumn {
-    Rank,
-    Model,
-    Organization,
-    Rating,
-    Votes,
-    InputPrice,
-    OutputPrice,
-    ImagePrice,
-    VideoPrice,
-    Context,
-    License,
-}
-
-impl ArenaColumn {
-    fn header(self) -> &'static str {
-        match self {
-            ArenaColumn::Rank => "#",
-            ArenaColumn::Model => "Model",
-            ArenaColumn::Organization => "Org",
-            ArenaColumn::Rating => "Rating",
-            ArenaColumn::Votes => "Votes",
-            ArenaColumn::InputPrice => "In $/M",
-            ArenaColumn::OutputPrice => "Out $/M",
-            ArenaColumn::ImagePrice => "$/img",
-            ArenaColumn::VideoPrice => "$/sec",
-            ArenaColumn::Context => "Ctx",
-            ArenaColumn::License => "License",
-        }
-    }
-
-    fn width(self) -> Constraint {
-        match self {
-            ArenaColumn::Rank => Constraint::Length(3),
-            ArenaColumn::Model => Constraint::Min(12),
-            ArenaColumn::Organization => Constraint::Length(12),
-            ArenaColumn::Rating => Constraint::Length(7),
-            ArenaColumn::Votes => Constraint::Length(7),
-            ArenaColumn::InputPrice | ArenaColumn::OutputPrice => Constraint::Length(7),
-            ArenaColumn::ImagePrice | ArenaColumn::VideoPrice => Constraint::Length(7),
-            ArenaColumn::Context => Constraint::Length(7),
-            ArenaColumn::License => Constraint::Length(12),
-        }
-    }
-
-    fn order(self) -> u8 {
-        match self {
-            ArenaColumn::Rank => 0,
-            ArenaColumn::Model => 1,
-            ArenaColumn::Organization => 2,
-            ArenaColumn::Rating => 3,
-            ArenaColumn::Votes => 4,
-            ArenaColumn::InputPrice => 5,
-            ArenaColumn::OutputPrice => 6,
-            ArenaColumn::ImagePrice => 7,
-            ArenaColumn::VideoPrice => 8,
-            ArenaColumn::Context => 9,
-            ArenaColumn::License => 10,
-        }
-    }
-}
-
-fn arena_columns(width: u16, kind: arena::Kind, sort_key: ArenaKey) -> Vec<ArenaColumn> {
-    let mut columns = vec![
-        ArenaColumn::Rank,
-        ArenaColumn::Model,
-        ArenaColumn::Rating,
-        ArenaColumn::Votes,
-    ];
-    match kind {
-        arena::Kind::Text => {
-            push_unique(&mut columns, ArenaColumn::InputPrice);
-            push_unique(&mut columns, ArenaColumn::OutputPrice);
-            if width >= 74 {
-                push_unique(&mut columns, ArenaColumn::Organization);
-            }
-            if width >= 88 || matches!(sort_key, ArenaKey::Context) {
-                push_unique(&mut columns, ArenaColumn::Context);
-            }
-            if width >= 104 {
-                push_unique(&mut columns, ArenaColumn::License);
-            }
-        }
-        arena::Kind::Image => {
-            push_unique(&mut columns, ArenaColumn::ImagePrice);
-            if width >= 66 {
-                push_unique(&mut columns, ArenaColumn::Organization);
-            }
-            if width >= 84 {
-                push_unique(&mut columns, ArenaColumn::License);
-            }
-        }
-        arena::Kind::Video => {
-            push_unique(&mut columns, ArenaColumn::VideoPrice);
-            if width >= 66 {
-                push_unique(&mut columns, ArenaColumn::Organization);
-            }
-            if width >= 84 {
-                push_unique(&mut columns, ArenaColumn::License);
-            }
-        }
-    }
-    columns.sort_by_key(|column| column.order());
-    columns
-}
-
-fn render_arena_table(
-    frame: &mut Frame,
-    area: Rect,
-    entries: &[arena::Entry],
-    app: &mut AppState,
-    board: Board,
-) {
-    let kind = match board {
-        Board::Arena(s) => s.kind(),
-        _ => arena::Kind::Text,
-    };
-    let columns = arena_columns(area.width, kind, app.arena_sort.key);
-
-    let header = Row::new(columns.iter().map(|column| header_cell(column.header())));
-
-    let rows = entries
-        .iter()
-        .map(|entry| Row::new(columns.iter().map(|column| arena_cell(*column, entry))));
-
-    let widths: Vec<Constraint> = columns.iter().map(|column| column.width()).collect();
-    let title = format!("Arena entries ({})", entries.len());
-
-    let table = Table::new(rows, widths)
-        .header(header.height(1))
-        .row_highlight_style(selected_row_style())
-        .highlight_symbol("> ")
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .column_spacing(1);
-
-    let st = app.table_state.entry(board).or_default();
-    frame.render_stateful_widget(table, area, st);
-}
-
-fn arena_cell(column: ArenaColumn, entry: &arena::Entry) -> Cell<'static> {
-    match column {
-        ArenaColumn::Rank => {
-            let rank = entry
-                .rank
-                .map(|rank| rank.to_string())
-                .unwrap_or_else(|| "-".into());
-            Cell::from(format!("{rank:>3}")).style(Style::default().fg(Color::DarkGray))
-        }
-        ArenaColumn::Model => Cell::from(entry.name.clone()).style(Style::default().bold()),
-        ArenaColumn::Organization => {
-            Cell::from(entry.organization.clone().unwrap_or_else(|| "-".into()))
-                .style(Style::default().fg(Color::Magenta))
-        }
-        ArenaColumn::Rating => {
-            Cell::from(fmt_f(entry.rating, 1)).style(score_color(entry.rating, 1100.0, 1500.0))
-        }
-        ArenaColumn::Votes => Cell::from(
-            entry
-                .votes
-                .map(format_compact)
-                .unwrap_or_else(|| "-".into()),
-        )
-        .style(Style::default().fg(Color::Blue)),
-        ArenaColumn::InputPrice => {
-            Cell::from(fmt_f(entry.input_price, 2)).style(price_color(entry.input_price))
-        }
-        ArenaColumn::OutputPrice => {
-            Cell::from(fmt_f(entry.output_price, 2)).style(price_color(entry.output_price))
-        }
-        ArenaColumn::ImagePrice => {
-            Cell::from(fmt_f(entry.price_per_image, 3)).style(price_color(entry.price_per_image))
-        }
-        ArenaColumn::VideoPrice => {
-            Cell::from(fmt_f(entry.price_per_second, 3)).style(price_color(entry.price_per_second))
-        }
-        ArenaColumn::Context => Cell::from(
-            entry
-                .context_length
-                .map(fmt_tokens)
-                .unwrap_or_else(|| "-".into()),
-        ),
-        ArenaColumn::License => Cell::from(entry.license.clone().unwrap_or_else(|| "-".into()))
-            .style(Style::default().fg(Color::DarkGray)),
-    }
-}
-
-fn render_arena_detail(frame: &mut Frame, area: Rect, entry: Option<&arena::Entry>, board: Board) {
-    let kind = match board {
-        Board::Arena(s) => s.kind(),
-        _ => arena::Kind::Text,
-    };
-    let max = area.width.saturating_sub(4) as usize;
-    let lines = match entry {
-        Some(entry) => {
-            let mut lines = vec![
-                Line::styled(
-                    truncate(&entry.name, max.max(8)),
-                    Style::default().fg(Color::Cyan).bold(),
-                ),
-                Line::from(""),
-                detail_line(
-                    "Rank",
-                    entry
-                        .rank
-                        .map(|rank| rank.to_string())
-                        .unwrap_or_else(|| "-".into()),
-                    Style::default().fg(Color::Gray),
-                ),
-                detail_line(
-                    "Org",
-                    entry.organization.clone().unwrap_or_else(|| "-".into()),
-                    Style::default().fg(Color::Magenta),
-                ),
-                detail_line(
-                    "Rating",
-                    fmt_f(entry.rating, 1),
-                    score_color(entry.rating, 1100.0, 1500.0),
-                ),
-                detail_line(
-                    "Votes",
-                    entry
-                        .votes
-                        .map(format_compact)
-                        .unwrap_or_else(|| "-".into()),
-                    Style::default().fg(Color::Blue),
-                ),
-            ];
-            match kind {
-                arena::Kind::Text => {
-                    lines.push(detail_line(
-                        "Input",
-                        fmt_price(entry.input_price, 2, "/M"),
-                        price_color(entry.input_price),
-                    ));
-                    lines.push(detail_line(
-                        "Output",
-                        fmt_price(entry.output_price, 2, "/M"),
-                        price_color(entry.output_price),
-                    ));
-                    lines.push(detail_line(
-                        "Context",
-                        entry
-                            .context_length
-                            .map(fmt_tokens)
-                            .unwrap_or_else(|| "-".into()),
-                        Style::default(),
-                    ));
-                }
-                arena::Kind::Image => lines.push(detail_line(
-                    "Price",
-                    fmt_price(entry.price_per_image, 3, "/img"),
-                    price_color(entry.price_per_image),
-                )),
-                arena::Kind::Video => lines.push(detail_line(
-                    "Price",
-                    fmt_price(entry.price_per_second, 3, "/sec"),
-                    price_color(entry.price_per_second),
-                )),
-            }
-            lines.push(detail_line(
-                "License",
-                entry.license.clone().unwrap_or_else(|| "-".into()),
-                Style::default().fg(Color::Gray),
-            ));
-            lines
-        }
-        None => vec![Line::styled(
-            "No row selected",
-            Style::default().fg(Color::DarkGray),
-        )],
-    };
-
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Selected"))
-        .wrap(Wrap { trim: true });
-    frame.render_widget(p, area);
-}
-
-fn render_footer(frame: &mut Frame, area: Rect, app: &AppState) {
-    if app.is_filter_editing() {
-        let line = vec![
-            key("type"),
-            text(" narrow filter  "),
-            key("Backspace"),
-            text(" delete char  "),
-            key("Ctrl-U"),
-            text(" clear filter  "),
-            key("Enter/Esc"),
-            text(" done"),
-        ];
-        let p = Paragraph::new(Line::from(line)).style(Style::default().fg(Color::Gray));
-        frame.render_widget(p, area);
-        return;
-    }
-
-    let nav = vec![
-        key("? / h"),
-        text(" help & keybindings  "),
-        key("q"),
-        text(" quit  "),
-        key("[ ]"),
-        text(" board  "),
-        key("↑/↓"),
-        text(" move row  "),
-        key("r"),
-        text(" reload"),
-    ];
-
-    let sort_keys = match app.current_board() {
-        Board::Aa => "i/s/p/c",
-        Board::AaAgents => "i/a/p/t/u/s",
-        Board::Arena(_) => "n/i/v/p/c",
-    };
-    let view_action = match app.current_view() {
-        View::Table => " chart view  ",
-        View::Chart => " table view  ",
-    };
-    let mut actions = vec![
-        key(sort_keys),
-        text(" sort  "),
-        key("o"),
-        text(" asc/desc  "),
-        key("m"),
-        text(view_action),
-        key("/"),
-        text(" filter"),
-    ];
-    if filter_is_active(app.current_filter()) {
-        actions.push(text("  "));
-        actions.push(key("Ctrl-U"));
-        actions.push(text(" clear filter"));
-    }
-
-    let p = Paragraph::new(vec![Line::from(nav), Line::from(actions)])
-        .style(Style::default().fg(Color::Gray));
-    frame.render_widget(p, area);
-}
-
-fn key(s: &str) -> Span<'_> {
-    Span::styled(
-        s,
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD),
-    )
-}
-
-fn text(s: &str) -> Span<'_> {
-    Span::raw(s)
-}
-
 fn fmt_f(v: Option<f64>, decimals: usize) -> String {
     match v {
         Some(x) => format!("{x:.*}", decimals),
-        None => "-".into(),
-    }
-}
-
-fn fmt_pct(v: Option<f64>, decimals: usize) -> String {
-    match v {
-        Some(x) => format!("{:.*}", decimals, x * 100.0),
         None => "-".into(),
     }
 }
@@ -2564,19 +945,6 @@ fn fmt_price(v: Option<f64>, decimals: usize, suffix: &str) -> String {
     }
 }
 
-fn fmt_duration(v: Option<f64>) -> String {
-    let Some(seconds) = v else {
-        return "-".into();
-    };
-    if seconds >= 3600.0 {
-        format!("{:.1}h", seconds / 3600.0)
-    } else if seconds >= 60.0 {
-        format!("{:.1}m", seconds / 60.0)
-    } else {
-        format!("{seconds:.0}s")
-    }
-}
-
 fn fmt_tokens(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{}M", n / 1_000_000)
@@ -2584,13 +952,6 @@ fn fmt_tokens(n: u64) -> String {
         format!("{}K", n / 1_000)
     } else {
         n.to_string()
-    }
-}
-
-fn fmt_compact_f(v: Option<f64>) -> String {
-    match v {
-        Some(x) if x.is_finite() && x >= 0.0 => format_compact(x.round() as u64),
-        Some(_) | None => "-".into(),
     }
 }
 
@@ -2606,43 +967,6 @@ fn format_compact(n: u64) -> String {
     }
 }
 
-fn aa_key_label(k: AaKey) -> &'static str {
-    match k {
-        AaKey::Intelligence => "Intelligence",
-        AaKey::Speed => "Speed",
-        AaKey::Price => "Price",
-        AaKey::Context => "Context",
-    }
-}
-
-fn agent_key_label(k: AgentKey) -> &'static str {
-    match k {
-        AgentKey::Index => "Index",
-        AgentKey::Pass => "Pass@1",
-        AgentKey::Cost => "Cost",
-        AgentKey::Time => "Time",
-        AgentKey::Tokens => "Tokens",
-        AgentKey::Turns => "Turns",
-    }
-}
-
-fn arena_key_label(k: ArenaKey) -> &'static str {
-    match k {
-        ArenaKey::Rank => "Rank",
-        ArenaKey::Rating => "Rating",
-        ArenaKey::Votes => "Votes",
-        ArenaKey::Price => "Price",
-        ArenaKey::Context => "Context",
-    }
-}
-
-fn view_label(view: View) -> &'static str {
-    match view {
-        View::Table => "view: table",
-        View::Chart => "view: chart",
-    }
-}
-
 fn score_color(v: Option<f64>, low: f64, high: f64) -> Style {
     let Some(x) = v else {
         return Style::default().fg(Color::DarkGray);
@@ -2655,10 +979,6 @@ fn score_color(v: Option<f64>, low: f64, high: f64) -> Style {
         Color::Red
     };
     Style::default().fg(color).bold()
-}
-
-fn score_color_pct(v: Option<f64>) -> Style {
-    score_color(v.map(|x| x * 100.0), 30.0, 60.0)
 }
 
 fn price_color(v: Option<f64>) -> Style {
@@ -2677,6 +997,7 @@ fn price_color(v: Option<f64>) -> Style {
 
 #[cfg(test)]
 mod tests {
+    use super::chart::{chart_bar_value, ChartPreference};
     use super::*;
 
     #[test]
@@ -2768,7 +1089,7 @@ mod tests {
 
         assert_eq!(app.boards.len(), 12);
         assert_eq!(app.boards[1], Board::AaAgents);
-        assert_eq!(app.boards[11].shortcut(11), Some('='));
+        assert_eq!(Board::shortcut(11), Some('='));
     }
 
     #[test]
@@ -2820,101 +1141,34 @@ mod tests {
     }
 
     #[test]
-    fn radar_normalizes_lower_better_metrics() {
-        let mut cheap = agent_row("cheap", "Cheap Agent", "OpenAI");
-        cheap.mean.cost_usd = Some(1.0);
-        let mut expensive = agent_row("expensive", "Expensive Agent", "OpenAI");
-        expensive.mean.cost_usd = Some(10.0);
-        let rows = vec![cheap.clone(), expensive.clone()];
-        let scale = radar_scale(&rows);
-        let cost_idx = radar_metric_index(RadarMetric::Cost);
-
-        assert_close(radar_values(&cheap, &scale)[cost_idx], 1.0);
-        assert_close(radar_values(&expensive, &scale)[cost_idx], 0.0);
-    }
-
-    #[test]
-    fn radar_equal_range_is_full_and_missing_values_are_zero() {
-        let full = agent_row("full", "Full Agent", "OpenAI");
-        let mut missing = agent_row("missing", "Missing Agent", "OpenAI");
-        missing.mean.reward = None;
-        let rows = vec![full.clone(), missing.clone()];
-        let scale = radar_scale(&rows);
-
-        assert_close(
-            radar_values(&full, &scale)[radar_metric_index(RadarMetric::Index)],
-            1.0,
-        );
-        assert_close(
-            radar_values(&missing, &scale)[radar_metric_index(RadarMetric::Pass)],
-            0.0,
-        );
-    }
-
-    #[test]
-    fn claude_code_agent_uses_orange() {
-        let claude = agent_row("opaque-id", "Claude Code", "Anthropic");
-        let codex = agent_row("codex", "Codex", "OpenAI");
-
-        assert_eq!(agent_brand_color(&claude), Some(CLAUDE_CODE_COLOR));
-        assert_ne!(agent_brand_color(&codex), Some(CLAUDE_CODE_COLOR));
-    }
-
-    #[test]
-    fn codex_agent_uses_configured_color() {
-        let codex = agent_row("opaque-id", "Codex", "OpenAI");
-        let claude = agent_row("claude-code", "Claude Code", "Anthropic");
-
-        assert_eq!(agent_brand_color(&codex), Some(CODEX_COLOR));
-        assert_ne!(agent_brand_color(&claude), Some(CODEX_COLOR));
-    }
-
-    #[test]
-    fn gemini_agent_uses_google_blue() {
-        let gemini = agent_row("opaque-id", "Gemini CLI", "Google");
-        let cursor = agent_row("cursor", "Cursor CLI", "Anysphere");
-
-        assert_eq!(agent_brand_color(&gemini), Some(GEMINI_COLOR));
-        assert_ne!(agent_brand_color(&cursor), Some(GEMINI_COLOR));
-    }
-
-    #[test]
-    fn unconfigured_agents_use_neutral_name_style() {
-        let cursor = agent_row("cursor", "Cursor CLI", "Anysphere");
-
-        assert_eq!(agent_brand_color(&cursor), None);
-        assert_eq!(agent_name_style(&cursor).fg, None);
-    }
-
-    #[test]
     fn responsive_aa_columns_keep_active_sort_metric_visible() {
-        let cols = aa_columns(48, AaKey::Speed);
+        let cols = aa_board::aa_columns(48, AaKey::Speed);
 
-        assert!(cols.contains(&AaColumn::Speed));
-        assert!(cols.contains(&AaColumn::Model));
-        assert!(cols.contains(&AaColumn::Intelligence));
-        assert!(cols.contains(&AaColumn::Price));
-        assert!(!cols.contains(&AaColumn::Released));
+        assert!(cols.contains(&aa_board::AaColumn::Speed));
+        assert!(cols.contains(&aa_board::AaColumn::Model));
+        assert!(cols.contains(&aa_board::AaColumn::Intelligence));
+        assert!(cols.contains(&aa_board::AaColumn::Price));
+        assert!(!cols.contains(&aa_board::AaColumn::Released));
     }
 
     #[test]
     fn responsive_arena_columns_keep_context_sort_visible() {
-        let cols = arena_columns(60, arena::Kind::Text, ArenaKey::Context);
+        let cols = arena_board::arena_columns(60, arena::Kind::Text, ArenaKey::Context);
 
-        assert!(cols.contains(&ArenaColumn::Context));
-        assert!(cols.contains(&ArenaColumn::InputPrice));
-        assert!(cols.contains(&ArenaColumn::OutputPrice));
-        assert!(!cols.contains(&ArenaColumn::License));
+        assert!(cols.contains(&arena_board::ArenaColumn::Context));
+        assert!(cols.contains(&arena_board::ArenaColumn::InputPrice));
+        assert!(cols.contains(&arena_board::ArenaColumn::OutputPrice));
+        assert!(!cols.contains(&arena_board::ArenaColumn::License));
     }
 
     #[test]
     fn responsive_agent_columns_keep_active_sort_metric_visible() {
-        let cols = agent_columns(48, AgentKey::Time);
+        let cols = agents::agent_columns(48, AgentKey::Time);
 
-        assert!(cols.contains(&AgentColumn::Time));
-        assert!(cols.contains(&AgentColumn::Agent));
-        assert!(cols.contains(&AgentColumn::Score));
-        assert!(!cols.contains(&AgentColumn::Released));
+        assert!(cols.contains(&agents::AgentColumn::Time));
+        assert!(cols.contains(&agents::AgentColumn::Agent));
+        assert!(cols.contains(&agents::AgentColumn::Score));
+        assert!(!cols.contains(&agents::AgentColumn::Released));
     }
 
     #[test]
@@ -2943,7 +1197,7 @@ mod tests {
             .unwrap();
         let text = rendered_text(wide_terminal.backend());
 
-        assert!(text.contains("AA models"));
+        assert!(text.contains("AA ("));
         assert!(text.contains("Selected"));
         assert!(text.contains("Claude Sonnet"));
     }
@@ -3018,7 +1272,7 @@ mod tests {
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let text = rendered_text(terminal.backend());
 
-        assert!(text.contains("AA coding agents"));
+        assert!(text.contains("AA Agents ("));
         assert!(text.contains("Radar"));
         assert!(text.contains("Legend"));
         assert!(text.contains("Top visible"));
@@ -3033,20 +1287,6 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
-    }
-
-    fn radar_metric_index(metric: RadarMetric) -> usize {
-        RadarMetric::ALL
-            .iter()
-            .position(|candidate| *candidate == metric)
-            .expect("radar metric exists")
-    }
-
-    fn assert_close(actual: f64, expected: f64) {
-        assert!(
-            (actual - expected).abs() < f64::EPSILON,
-            "expected {expected}, got {actual}"
-        );
     }
 
     fn aa_model(id: &str, name: &str, provider: &str) -> aa::Model {
@@ -3107,5 +1347,100 @@ mod tests {
                 total_tokens: Some(1_500_000.0),
             },
         }
+    }
+
+    fn make_models(n: usize) -> Vec<aa::Model> {
+        (0..n)
+            .map(|i| aa_model(&format!("m{i}"), &format!("Model {i}"), "Provider"))
+            .collect()
+    }
+
+    #[test]
+    fn page_down_moves_by_ten_rows() {
+        let mut app = AppState::new();
+        app.set_status(Board::Aa, Status::Loaded(Data::Aa(make_models(30))));
+        assert_eq!(selected_index(&app, Board::Aa), 0);
+
+        app.move_page_down();
+        assert_eq!(selected_index(&app, Board::Aa), 10);
+
+        app.move_page_down();
+        assert_eq!(selected_index(&app, Board::Aa), 20);
+
+        app.move_page_down();
+        assert_eq!(selected_index(&app, Board::Aa), 29);
+    }
+
+    #[test]
+    fn page_up_stops_at_zero() {
+        let mut app = AppState::new();
+        app.set_status(Board::Aa, Status::Loaded(Data::Aa(make_models(30))));
+        app.move_to_bottom();
+        assert_eq!(selected_index(&app, Board::Aa), 29);
+
+        app.move_page_up();
+        assert_eq!(selected_index(&app, Board::Aa), 19);
+
+        app.move_page_up();
+        assert_eq!(selected_index(&app, Board::Aa), 9);
+
+        app.move_page_up();
+        assert_eq!(selected_index(&app, Board::Aa), 0);
+
+        // Already at top, stays at 0
+        app.move_page_up();
+        assert_eq!(selected_index(&app, Board::Aa), 0);
+    }
+
+    #[test]
+    fn move_to_top_and_bottom() {
+        let mut app = AppState::new();
+        app.set_status(Board::Aa, Status::Loaded(Data::Aa(make_models(20))));
+
+        app.move_to_bottom();
+        assert_eq!(selected_index(&app, Board::Aa), 19);
+
+        app.move_to_top();
+        assert_eq!(selected_index(&app, Board::Aa), 0);
+    }
+
+    #[test]
+    fn move_to_bottom_on_empty_list() {
+        let mut app = AppState::new();
+        app.set_status(Board::Aa, Status::Loaded(Data::Aa(vec![])));
+
+        app.move_to_bottom();
+        // Should not panic, selection stays None
+        assert_eq!(
+            app.table_state.get(&Board::Aa).and_then(|s| s.selected()),
+            None
+        );
+    }
+
+    #[test]
+    fn render_shows_version_in_title() {
+        let mut app = AppState::new();
+        app.set_status(
+            Board::Aa,
+            Status::Loaded(Data::Aa(vec![aa_model("test", "Test Model", "Provider")])),
+        );
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = rendered_text(terminal.backend());
+
+        assert!(text.contains("llmpk v"));
+    }
+
+    #[test]
+    fn render_shows_position_indicator() {
+        let mut app = AppState::new();
+        app.set_status(Board::Aa, Status::Loaded(Data::Aa(make_models(5))));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = rendered_text(terminal.backend());
+
+        assert!(text.contains("1/5"));
     }
 }

@@ -38,7 +38,9 @@ pub fn extract_stream(html: &str) -> Result<String> {
         decode_into(&cap[1], &mut joined);
     }
     if joined.is_empty() {
-        return Err(anyhow!("no __next_f.push chunks in HTML"));
+        return Err(anyhow!(
+            "could not find leaderboard data — the site may have changed its structure"
+        ));
     }
     Ok(joined)
 }
@@ -63,6 +65,24 @@ fn decode_into(src: &str, out: &mut String) {
             Some('u') => {
                 let hex: String = chars.by_ref().take(4).collect();
                 if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                    // Handle UTF-16 surrogate pairs
+                    if (0xD800..=0xDBFF).contains(&n) {
+                        // High surrogate — look for \u low surrogate
+                        if chars.next() == Some('\\') && chars.next() == Some('u') {
+                            let low_hex: String = chars.by_ref().take(4).collect();
+                            if let Ok(low) = u32::from_str_radix(&low_hex, 16) {
+                                if (0xDC00..=0xDFFF).contains(&low) {
+                                    let cp = 0x10000 + (n - 0xD800) * 0x400 + (low - 0xDC00);
+                                    if let Some(ch) = char::from_u32(cp) {
+                                        out.push(ch);
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        out.push('\u{FFFD}');
+                        continue;
+                    }
                     if let Some(ch) = char::from_u32(n) {
                         out.push(ch);
                         continue;
@@ -145,7 +165,6 @@ pub fn first_array_after<'a>(stream: &'a str, key: &str) -> Option<&'a str> {
     let needle = format!("\"{key}\":");
     let i = stream.find(&needle)?;
     let bytes = stream.as_bytes();
-    // Locate the opening `[` after the colon.
     let mut start = i + needle.len();
     while start < bytes.len() && bytes[start].is_ascii_whitespace() {
         start += 1;
@@ -223,10 +242,8 @@ mod tests {
                 fresh_times.push(t.elapsed());
             }
 
-            let shared_avg: Duration =
-                shared_times.iter().sum::<Duration>() / rounds;
-            let fresh_avg: Duration =
-                fresh_times.iter().sum::<Duration>() / rounds;
+            let shared_avg: Duration = shared_times.iter().sum::<Duration>() / rounds;
+            let fresh_avg: Duration = fresh_times.iter().sum::<Duration>() / rounds;
             let speedup = fresh_avg.as_secs_f64() / shared_avg.as_secs_f64();
 
             println!("URL: {url}");
@@ -289,12 +306,9 @@ mod tests {
             recompile_times.push(t.elapsed());
         }
 
-        let static_avg: Duration =
-            static_times.iter().sum::<Duration>() / rounds;
-        let compiled_avg: Duration =
-            compiled_times.iter().sum::<Duration>() / rounds;
-        let recompile_avg: Duration =
-            recompile_times.iter().sum::<Duration>() / rounds;
+        let static_avg: Duration = static_times.iter().sum::<Duration>() / rounds;
+        let compiled_avg: Duration = compiled_times.iter().sum::<Duration>() / rounds;
+        let recompile_avg: Duration = recompile_times.iter().sum::<Duration>() / rounds;
 
         println!("\n=== Regex Benchmark ({rounds} rounds) ===\n");
         println!("  Recompile each call: {recompile_times:?}  avg={recompile_avg:.0?}");
