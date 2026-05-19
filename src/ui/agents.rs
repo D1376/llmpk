@@ -15,8 +15,8 @@ use super::chart::{
     ChartRow,
 };
 use super::{
-    agent_metric, color_for_seed, fmt_f, fmt_price, header_cell, highlight_matches, price_color, push_unique,
-    score_color, selected_row_style, truncate, AgentKey, AppState,
+    agent_metric, color_for_seed, fmt_f, fmt_price, header_cell, highlight_matches, price_color,
+    push_unique, score_color, selected_row_style, truncate, AgentKey, AppState,
 };
 use crate::board::Board;
 use crate::coding_agents;
@@ -144,12 +144,15 @@ pub(super) fn render_agents_table(
     let columns = agent_columns(area.width, sort_key);
     let header = Row::new(columns.iter().map(|column| header_cell(column.header())));
 
-    let table_rows = indices
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &idx)| {
-            all_rows.get(idx).map(|row| Row::new(columns.iter().map(|column| agent_cell(*column, i, row, filter_tokens))))
-        });
+    let table_rows = indices.iter().enumerate().filter_map(|(i, &idx)| {
+        all_rows.get(idx).map(|row| {
+            Row::new(
+                columns
+                    .iter()
+                    .map(|column| agent_cell(*column, i, row, filter_tokens)),
+            )
+        })
+    });
 
     let widths: Vec<Constraint> = columns.iter().map(|column| column.width()).collect();
     let title = format!("AA Agents ({})", indices.len());
@@ -166,12 +169,21 @@ pub(super) fn render_agents_table(
     frame.render_stateful_widget(table, area, st);
 }
 
-fn agent_cell(column: AgentColumn, index: usize, row: &coding_agents::AgentRow, filter_tokens: &[String]) -> Cell<'static> {
+fn agent_cell(
+    column: AgentColumn,
+    index: usize,
+    row: &coding_agents::AgentRow,
+    filter_tokens: &[String],
+) -> Cell<'static> {
     match column {
         AgentColumn::Index => {
             Cell::from(format!("{:>2}", index + 1)).style(Style::default().fg(Color::DarkGray))
         }
-        AgentColumn::Agent => Cell::from(highlight_matches(row.agent(), filter_tokens, agent_name_style(row))),
+        AgentColumn::Agent => Cell::from(highlight_matches(
+            row.agent(),
+            filter_tokens,
+            agent_name_style(row),
+        )),
         AgentColumn::Model => Cell::from(row.model().to_string()),
         AgentColumn::Provider => {
             Cell::from(row.provider().to_string()).style(Style::default().fg(Color::Magenta))
@@ -182,9 +194,11 @@ fn agent_cell(column: AgentColumn, index: usize, row: &coding_agents::AgentRow, 
         AgentColumn::Pass => {
             Cell::from(fmt_pct(row.mean.reward, 1)).style(score_color_pct(row.mean.reward))
         }
-        AgentColumn::Cost => {
-            Cell::from(fmt_price(row.mean.cost_usd, 2, "")).style(price_color(row.mean.cost_usd, 1.0, 5.0))
-        }
+        AgentColumn::Cost => Cell::from(fmt_price(row.mean.cost_usd, 2, "")).style(price_color(
+            row.mean.cost_usd,
+            1.0,
+            5.0,
+        )),
         AgentColumn::Time => Cell::from(fmt_duration(row.mean.agent_wall_time_sec))
             .style(Style::default().fg(Color::Blue)),
         AgentColumn::Tokens => Cell::from(fmt_compact_f(row.mean.total_tokens)),
@@ -270,7 +284,9 @@ fn radar_metric_bounds(
     let mut found = false;
 
     for &idx in indices {
-        let Some(row) = all_rows.get(idx) else { continue };
+        let Some(row) = all_rows.get(idx) else {
+            continue;
+        };
         let Some(value) = metric.value(row).filter(|value| value.is_finite()) else {
             continue;
         };
@@ -312,7 +328,12 @@ fn radar_values(row: &coding_agents::AgentRow, scale: &RadarScale) -> [f64; RADA
     values
 }
 
-fn radar_series(all_rows: &[coding_agents::AgentRow], indices: &[usize], offset: usize, limit: usize) -> Vec<RadarSeries> {
+fn radar_series(
+    all_rows: &[coding_agents::AgentRow],
+    indices: &[usize],
+    offset: usize,
+    limit: usize,
+) -> Vec<RadarSeries> {
     let scale = radar_scale(all_rows, indices);
     indices
         .iter()
@@ -343,7 +364,13 @@ pub(super) fn render_agents_radar_panel(
     render_agents_radar_legend(frame, chunks[1], all_rows, indices, selected, offset);
 }
 
-fn render_agents_radar_canvas(frame: &mut Frame, area: Rect, all_rows: &[coding_agents::AgentRow], indices: &[usize], offset: usize) {
+fn render_agents_radar_canvas(
+    frame: &mut Frame,
+    area: Rect,
+    all_rows: &[coding_agents::AgentRow],
+    indices: &[usize],
+    offset: usize,
+) {
     let series = radar_series(all_rows, indices, offset, RADAR_LIMIT);
     if series.is_empty() {
         let p = Paragraph::new("no radar data")
@@ -407,13 +434,12 @@ fn render_agents_radar_legend(
     } else {
         "Top visible".to_string()
     };
-    let mut lines = vec![Line::styled(
-        header,
-        Style::default().fg(Color::DarkGray),
-    )];
+    let mut lines = vec![Line::styled(header, Style::default().fg(Color::DarkGray))];
 
     for (i, &idx) in indices.iter().skip(offset).take(RADAR_LIMIT).enumerate() {
-        let Some(row) = all_rows.get(idx) else { continue };
+        let Some(row) = all_rows.get(idx) else {
+            continue;
+        };
         let marker = if idx == selected { "*" } else { " " };
         lines.push(Line::styled(
             format!(
@@ -460,15 +486,9 @@ fn render_agents_radar_legend(
         ]));
         lines.push(Line::from(vec![
             Span::styled("Tok ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                fmt_compact_f(row.mean.total_tokens),
-                Style::default(),
-            ),
+            Span::styled(fmt_compact_f(row.mean.total_tokens), Style::default()),
             Span::raw("  Turns "),
-            Span::styled(
-                fmt_f(row.mean.steps, 1),
-                Style::default(),
-            ),
+            Span::styled(fmt_f(row.mean.steps, 1), Style::default()),
         ]));
     }
 

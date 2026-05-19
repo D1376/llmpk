@@ -438,8 +438,8 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::test_helpers::*;
+    use super::*;
 
     #[test]
     fn current_board_filter_counts_aa_rows_and_can_clear() {
@@ -585,10 +585,7 @@ mod tests {
     #[test]
     fn filter_cache_returns_all_indices_when_no_filter() {
         let mut app = AppState::new();
-        app.set_status(
-            Board::Aa,
-            Status::Loaded(Data::Aa(make_models(5))),
-        );
+        app.set_status(Board::Aa, Status::Loaded(Data::Aa(make_models(5))));
         let indices = app.filter_cache(Board::Aa, "");
         assert_eq!(indices, &[0, 1, 2, 3, 4]);
     }

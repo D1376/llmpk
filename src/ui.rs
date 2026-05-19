@@ -117,7 +117,14 @@ fn render_body(frame: &mut Frame, area: Rect, app: &mut AppState) {
                         app.compact,
                     );
                     if let Some(radar_area) = radar_area {
-                        agents::render_agents_radar_panel(frame, radar_area, rows, &indices, selected, app.radar_offset);
+                        agents::render_agents_radar_panel(
+                            frame,
+                            radar_area,
+                            rows,
+                            &indices,
+                            selected,
+                            app.radar_offset,
+                        );
                     }
                 }
                 View::Chart => agents::render_agents_chart(frame, area, rows, &indices, app),
@@ -324,7 +331,9 @@ pub(crate) fn highlight_matches(text: &str, tokens: &[String], base_style: Style
             }
             spans.push(Span::styled(
                 text[start..end].to_string(),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ));
             last_end = end;
         } else {
@@ -340,8 +349,8 @@ pub(crate) fn highlight_matches(text: &str, tokens: &[String], base_style: Style
 #[cfg(test)]
 mod tests {
     use super::chart::{chart_bar_value, ChartPreference};
-    use super::*;
     use super::test_helpers::*;
+    use super::*;
     use crate::board::Board;
 
     #[test]

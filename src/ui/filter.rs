@@ -88,7 +88,8 @@ mod tests {
 
     #[test]
     fn aa_matches_filter_by_id() {
-        let model = crate::ui::test_helpers::aa_model("claude-sonnet-4", "Claude Sonnet 4", "Anthropic");
+        let model =
+            crate::ui::test_helpers::aa_model("claude-sonnet-4", "Claude Sonnet 4", "Anthropic");
         assert!(aa_matches_filter(&model, &["claude".into()]));
         assert!(!aa_matches_filter(&model, &["gpt".into()]));
     }
@@ -101,8 +102,12 @@ mod tests {
 
     #[test]
     fn aa_matches_filter_multi_token_and() {
-        let model = crate::ui::test_helpers::aa_model("claude-sonnet-4", "Claude Sonnet 4", "Anthropic");
-        assert!(aa_matches_filter(&model, &["claude".into(), "sonnet".into()]));
+        let model =
+            crate::ui::test_helpers::aa_model("claude-sonnet-4", "Claude Sonnet 4", "Anthropic");
+        assert!(aa_matches_filter(
+            &model,
+            &["claude".into(), "sonnet".into()]
+        ));
         assert!(!aa_matches_filter(&model, &["claude".into(), "gpt".into()]));
     }
 

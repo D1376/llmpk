@@ -111,7 +111,12 @@ fn run(terminal: &mut Term) -> (Result<()>, Vec<String>) {
     (run_result, panics)
 }
 
-fn handle_key(k: KeyEvent, app: &mut AppState, tx: &mpsc::Sender<Msg>, handles: &mut Vec<thread::JoinHandle<()>>) -> bool {
+fn handle_key(
+    k: KeyEvent,
+    app: &mut AppState,
+    tx: &mpsc::Sender<Msg>,
+    handles: &mut Vec<thread::JoinHandle<()>>,
+) -> bool {
     if k.modifiers.contains(KeyModifiers::CONTROL) && matches!(k.code, KeyCode::Char('c')) {
         return true;
     }
@@ -179,10 +184,14 @@ fn handle_key(k: KeyEvent, app: &mut AppState, tx: &mpsc::Sender<Msg>, handles: 
         KeyCode::Char(c @ ('a' | 'c' | 'i' | 'p' | 's' | 't' | 'u')) => {
             app.cycle_sort(c);
         }
-        KeyCode::Tab if app.current_board() == Board::AaAgents && app.current_view() == View::Table => {
+        KeyCode::Tab
+            if app.current_board() == Board::AaAgents && app.current_view() == View::Table =>
+        {
             app.radar_scroll_down();
         }
-        KeyCode::BackTab if app.current_board() == Board::AaAgents && app.current_view() == View::Table => {
+        KeyCode::BackTab
+            if app.current_board() == Board::AaAgents && app.current_view() == View::Table =>
+        {
             app.radar_scroll_up();
         }
         KeyCode::Char(_) => {}
@@ -202,7 +211,12 @@ fn handle_filter_key(k: KeyEvent, app: &mut AppState) {
     }
 }
 
-fn handle_mouse(m: MouseEvent, app: &mut AppState, tx: &mpsc::Sender<Msg>, handles: &mut Vec<thread::JoinHandle<()>>) {
+fn handle_mouse(
+    m: MouseEvent,
+    app: &mut AppState,
+    tx: &mpsc::Sender<Msg>,
+    handles: &mut Vec<thread::JoinHandle<()>>,
+) {
     match m.kind {
         MouseEventKind::ScrollUp => app.move_up(),
         MouseEventKind::ScrollDown => app.move_down(),
@@ -220,9 +234,16 @@ fn handle_mouse(m: MouseEvent, app: &mut AppState, tx: &mpsc::Sender<Msg>, handl
     }
 }
 
-fn ensure_loaded(app: &mut AppState, tx: &mpsc::Sender<Msg>, handles: &mut Vec<thread::JoinHandle<()>>) {
+fn ensure_loaded(
+    app: &mut AppState,
+    tx: &mpsc::Sender<Msg>,
+    handles: &mut Vec<thread::JoinHandle<()>>,
+) {
     let b = app.current_board();
-    if matches!(app.status.get(&b), Some(Status::Loading) | Some(Status::Loaded(_))) {
+    if matches!(
+        app.status.get(&b),
+        Some(Status::Loading) | Some(Status::Loaded(_))
+    ) {
         return;
     }
     app.set_status(b, Status::Loading);
@@ -242,4 +263,3 @@ fn copy_to_clipboard(text: &str) {
     let _ = write!(io::stdout(), "\x1b]52;c;{encoded}\x07");
     let _ = io::stdout().flush();
 }
-

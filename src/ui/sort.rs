@@ -121,8 +121,8 @@ fn cmp_opt_for_dir(a: Option<f64>, b: Option<f64>, dir: SortDir) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
-    use crate::board::{Board, Data, Status};
     use super::super::AppState;
+    use crate::board::{Board, Data, Status};
 
     #[test]
     fn descending_sorts_keep_missing_metrics_last() {

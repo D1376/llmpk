@@ -7,8 +7,8 @@ use ratatui::{
 };
 
 use super::{
-    aa_board, agents, filter_is_active, format_filter_label, truncate,
-    AppState, View, SPINNER_FRAMES, VERSION,
+    aa_board, agents, filter_is_active, format_filter_label, truncate, AppState, View,
+    SPINNER_FRAMES, VERSION,
 };
 use crate::board::{Board, Data, Status};
 
@@ -232,30 +232,55 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
             format_filter_label(query, app.is_filter_editing())
         );
         let w = 6 + label.len(); // "  |  " + label
-        Some((vec![Span::raw("  |  "), Span::styled(label, Style::default().fg(Color::Yellow))], w))
+        Some((
+            vec![
+                Span::raw("  |  "),
+                Span::styled(label, Style::default().fg(Color::Yellow)),
+            ],
+            w,
+        ))
     } else {
         None
     };
 
     let sort_segment = {
         let w = 6 + sort_label.len();
-        (vec![Span::raw("  |  "), Span::styled(sort_label, Style::default().fg(Color::Cyan))], w)
+        (
+            vec![
+                Span::raw("  |  "),
+                Span::styled(sort_label, Style::default().fg(Color::Cyan)),
+            ],
+            w,
+        )
     };
     let view_segment = {
         let vl = view_label(app.current_view());
-        (vec![Span::raw("  |  "), Span::styled(vl, Style::default().fg(Color::Blue))], 6 + vl.len())
+        (
+            vec![
+                Span::raw("  |  "),
+                Span::styled(vl, Style::default().fg(Color::Blue)),
+            ],
+            6 + vl.len(),
+        )
     };
     let status_segment = {
         let sl = status_span.width();
         (vec![Span::raw("  |  "), status_span], 6 + sl)
     };
     let source_segment = {
-        (vec![Span::styled(source, Style::default().add_modifier(Modifier::BOLD))], source.len())
+        (
+            vec![Span::styled(
+                source,
+                Style::default().add_modifier(Modifier::BOLD),
+            )],
+            source.len(),
+        )
     };
 
     // Priority order: source (lowest), status, view, sort, filter (highest).
     // Drop from the start of this vec when overflowing.
-    let mut segments: Vec<(Vec<Span>, usize)> = vec![source_segment, status_segment, view_segment, sort_segment];
+    let mut segments: Vec<(Vec<Span>, usize)> =
+        vec![source_segment, status_segment, view_segment, sort_segment];
     if let Some(f) = filter_segment {
         segments.push(f);
     }
