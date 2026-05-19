@@ -7,15 +7,14 @@ use ratatui::{
 };
 
 use super::{
-    aa_board, agents, arena_board, filter_is_active, format_filter_label, selected_index, truncate,
+    aa_board, agents, filter_is_active, format_filter_label, truncate,
     AppState, View, SPINNER_FRAMES, VERSION,
 };
-use crate::arena;
 use crate::board::{Board, Data, Status};
 
 pub(super) fn render_help_overlay(frame: &mut Frame, area: Rect) {
     let w = 82.min(area.width.saturating_sub(2));
-    let popup = centered_rect(area, w, 42);
+    let popup = centered_rect(area, w, 36);
     frame.render_widget(ratatui::widgets::Clear, popup);
 
     let dim = Style::default().fg(Color::DarkGray);
@@ -29,16 +28,12 @@ pub(super) fn render_help_overlay(frame: &mut Frame, area: Rect) {
             "AA Agents",
             "artificialanalysis.ai coding-agent benchmark index",
         ),
-        help_row(
-            "Arena",
-            "arena.ai community-vote leaderboards (10 modalities)",
-        ),
         Line::from(""),
         Line::styled("Navigation", head),
         help_row("q  Esc  Ctrl-C", "Quit llmpk"),
         help_row("?  h", "Toggle this help overlay"),
         help_row("[   ]", "Previous / next board (cycles)"),
-        help_row("1-9  0  -  =", "Jump directly to board 1-12"),
+        help_row("1  2", "Jump directly to board 1-2"),
         help_row("r", "Reload the current board (refetch from source)"),
         help_row("y", "Copy selected model name to clipboard (OSC 52)"),
         help_row("↑  ↓  k  j", "Move the highlighted row"),
@@ -49,6 +44,9 @@ pub(super) fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::styled("View & sort", head),
         help_row("m", "Toggle table / chart view"),
         help_row("o", "Reverse current sort direction (asc <-> desc)"),
+        help_row("v", "Toggle chart compare mode (select two models)"),
+        help_row("z", "Toggle compact mode (tighter column spacing)"),
+        help_row("Tab/Shift-Tab", "Scroll radar chart (agents board)"),
         Line::styled("  AA sort keys", dim),
         help_row("i", "Intelligence Index — composite quality score"),
         help_row("s", "Output Speed — tokens generated per second"),
@@ -61,15 +59,6 @@ pub(super) fn render_help_overlay(frame: &mut Frame, area: Rect) {
         help_row("t", "Time — mean wall-clock task runtime"),
         help_row("u", "Tokens — mean total token usage per task"),
         help_row("s", "Turns — mean agent turns per task"),
-        Line::styled("  Arena sort keys", dim),
-        help_row("n  k", "Rank — leaderboard position (1 = best)"),
-        help_row("i", "Rating — ELO-style score from head-to-head votes"),
-        help_row("v", "Votes — number of human comparisons collected"),
-        help_row(
-            "p",
-            "Price — $/M tokens, $/image, or $/sec (board-dependent)",
-        ),
-        help_row("c", "Context Window — max tokens the model accepts"),
         Line::from(""),
         Line::styled("Filter", head),
         help_row(
@@ -80,7 +69,6 @@ pub(super) fn render_help_overlay(frame: &mut Frame, area: Rect) {
         help_row("Backspace", "Delete a character while editing"),
         help_row("Ctrl-U", "Clear the filter"),
         help_row("Enter  Esc", "Finish editing (filter stays applied)"),
-        Line::from(""),
         Line::from(""),
         Line::styled(
             format!("llmpk v{VERSION}"),
@@ -175,16 +163,6 @@ fn tab_label(board: Board) -> &'static str {
     match board {
         Board::Aa => "AA",
         Board::AaAgents => "AAg",
-        Board::Arena(arena::Slug::Text) => "Txt",
-        Board::Arena(arena::Slug::Search) => "Srch",
-        Board::Arena(arena::Slug::Vision) => "Vis",
-        Board::Arena(arena::Slug::Document) => "Doc",
-        Board::Arena(arena::Slug::Code) => "Code",
-        Board::Arena(arena::Slug::TextToImage) => "T2I",
-        Board::Arena(arena::Slug::ImageEdit) => "Edit",
-        Board::Arena(arena::Slug::TextToVideo) => "T2V",
-        Board::Arena(arena::Slug::ImageToVideo) => "I2V",
-        Board::Arena(arena::Slug::VideoEdit) => "VEd",
     }
 }
 
@@ -219,15 +197,6 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
             };
             Span::styled(label, Style::default().fg(Color::Green))
         }
-        Some(Status::Loaded(Data::Arena(v))) => {
-            let visible = app.row_count(board);
-            let label = if filter_is_active(query) {
-                format!("{visible}/{} entries", v.len())
-            } else {
-                format!("{} entries", v.len())
-            };
-            Span::styled(label, Style::default().fg(Color::Green))
-        }
         Some(Status::Loading) | None => Span::styled(
             format!("{} loading...", spinner_frame()),
             Style::default().fg(Color::Yellow),
@@ -249,41 +218,60 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
             agents::agent_key_label(app.agent_sort.key),
             app.agent_sort.dir.arrow()
         ),
-        Board::Arena(_) => format!(
-            "sort: {} {}",
-            arena_board::arena_key_label(app.arena_sort.key),
-            app.arena_sort.dir.arrow()
-        ),
     };
     let source = match board {
-        Board::Aa => "artificialanalysis.ai".to_string(),
-        Board::AaAgents => "artificialanalysis.ai/agents/coding-agents".to_string(),
-        Board::Arena(s) => format!("arena.ai/leaderboard/{}", s.path()),
+        Board::Aa => "artificialanalysis.ai",
+        Board::AaAgents => "artificialanalysis.ai/agents/coding-agents",
     };
 
-    let mut spans = vec![
-        Span::styled(source, Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("  |  "),
-        status_span,
-        Span::raw("  |  "),
-        Span::styled(
-            view_label(app.current_view()),
-            Style::default().fg(Color::Blue),
-        ),
-        Span::raw("  |  "),
-        Span::styled(sort_label, Style::default().fg(Color::Cyan)),
-    ];
-    if app.is_filter_editing() || filter_is_active(query) {
-        spans.push(Span::raw("  |  "));
-        spans.push(Span::styled(
-            format!(
-                "filter: {}",
-                format_filter_label(query, app.is_filter_editing())
-            ),
-            Style::default().fg(Color::Yellow),
-        ));
+    // Build segments in priority order (highest priority = last to drop).
+    // Each segment is (spans, width_chars).
+    let filter_segment = if app.is_filter_editing() || filter_is_active(query) {
+        let label = format!(
+            "filter: {}",
+            format_filter_label(query, app.is_filter_editing())
+        );
+        let w = 6 + label.len(); // "  |  " + label
+        Some((vec![Span::raw("  |  "), Span::styled(label, Style::default().fg(Color::Yellow))], w))
+    } else {
+        None
+    };
+
+    let sort_segment = {
+        let w = 6 + sort_label.len();
+        (vec![Span::raw("  |  "), Span::styled(sort_label, Style::default().fg(Color::Cyan))], w)
+    };
+    let view_segment = {
+        let vl = view_label(app.current_view());
+        (vec![Span::raw("  |  "), Span::styled(vl, Style::default().fg(Color::Blue))], 6 + vl.len())
+    };
+    let status_segment = {
+        let sl = status_span.width();
+        (vec![Span::raw("  |  "), status_span], 6 + sl)
+    };
+    let source_segment = {
+        (vec![Span::styled(source, Style::default().add_modifier(Modifier::BOLD))], source.len())
+    };
+
+    // Priority order: source (lowest), status, view, sort, filter (highest).
+    // Drop from the start of this vec when overflowing.
+    let mut segments: Vec<(Vec<Span>, usize)> = vec![source_segment, status_segment, view_segment, sort_segment];
+    if let Some(f) = filter_segment {
+        segments.push(f);
     }
 
+    // Compute available width (area minus borders).
+    let avail = area.width.saturating_sub(2) as usize;
+    // Drop lowest-priority segments until it fits.
+    while segments.len() > 1 {
+        let total: usize = segments.iter().map(|(_, w)| w).sum();
+        if total <= avail {
+            break;
+        }
+        segments.remove(0);
+    }
+
+    let spans: Vec<Span> = segments.into_iter().flat_map(|(s, _)| s).collect();
     let line = Line::from(spans);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -414,7 +402,17 @@ pub(super) fn render_footer(frame: &mut Frame, area: Rect, app: &AppState) {
 
     let board = app.current_board();
     let total = app.row_count(board);
-    let selected = selected_index(app, board);
+    let selected = app.selected_idx();
+    let unfiltered = match app.status.get(&board) {
+        Some(Status::Loaded(Data::Aa(v))) => v.len(),
+        Some(Status::Loaded(Data::AaAgents(v))) => v.len(),
+        _ => 0,
+    };
+    let filter_info = if filter_is_active(app.current_filter()) && total != unfiltered {
+        format!("  showing {total}/{unfiltered}")
+    } else {
+        String::new()
+    };
     let pos = if total > 0 && app.current_view() == View::Table {
         format!("  {}/{}", selected + 1, total)
     } else {
@@ -437,12 +435,12 @@ pub(super) fn render_footer(frame: &mut Frame, area: Rect, app: &AppState) {
         key("y"),
         text(" copy"),
         Span::styled(pos, Style::default().fg(Color::Cyan)),
+        Span::styled(filter_info, Style::default().fg(Color::Yellow)),
     ];
 
     let sort_keys = match app.current_board() {
         Board::Aa => "i/s/p/c",
         Board::AaAgents => "i/a/p/t/u/s",
-        Board::Arena(_) => "k/n/i/v/p/c",
     };
     let view_action = match app.current_view() {
         View::Table => " chart  ",

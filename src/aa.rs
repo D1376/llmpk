@@ -93,6 +93,14 @@ mod tests {
     }
 
     #[test]
+    fn parses_committed_fixture() {
+        let html = include_str!("../tests/fixtures/aa_homepage.html");
+        let models = parse(html).expect("parse committed fixture");
+        assert!(models.len() >= 2, "expected >=2 models, got {}", models.len());
+        assert!(models.iter().any(|m| m.id == "claude-sonnet-4"));
+    }
+
+    #[test]
     fn parses_fixture_when_provided() {
         let Ok(path) = std::env::var("LLMPK_HOMEPAGE_FIXTURE") else {
             return;

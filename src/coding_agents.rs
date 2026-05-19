@@ -127,6 +127,14 @@ mod tests {
     }
 
     #[test]
+    fn parses_committed_fixture() {
+        let html = include_str!("../tests/fixtures/coding_agents.html");
+        let rows = parse(html).expect("parse committed fixture");
+        assert!(rows.len() >= 2, "expected >=2 rows, got {}", rows.len());
+        assert!(rows.iter().any(|r| r.id == "claude-code"));
+    }
+
+    #[test]
     fn parses_fixture_when_provided() {
         let Ok(path) = std::env::var("LLMPK_CODING_AGENTS_FIXTURE") else {
             return;

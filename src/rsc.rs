@@ -206,6 +206,134 @@ pub fn first_array_after<'a>(stream: &'a str, key: &str) -> Option<&'a str> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn decode_basic_escapes() {
+        let mut out = String::new();
+        decode_into(r#"hello\nworld\t!"#, &mut out);
+        assert_eq!(out, "hello\nworld\t!");
+    }
+
+    #[test]
+    fn decode_quote_and_backslash() {
+        let mut out = String::new();
+        decode_into(r#"say \"hi\" and \\"#, &mut out);
+        assert_eq!(out, r#"say "hi" and \"#);
+    }
+
+    #[test]
+    fn decode_unicode_bmp() {
+        let mut out = String::new();
+        decode_into(r#"Aé"#, &mut out);
+        assert_eq!(out, "Aé");
+    }
+
+    #[test]
+    fn decode_utf16_surrogate_pair() {
+        let mut out = String::new();
+        // U+1F600 = 😀
+        decode_into(r#"😀"#, &mut out);
+        assert_eq!(out, "😀");
+    }
+
+    #[test]
+    fn decode_high_surrogate_without_low() {
+        let mut out = String::new();
+        decode_into(r#"\uD800"#, &mut out);
+        assert_eq!(out, "\u{FFFD}");
+    }
+
+    #[test]
+    fn decode_invalid_hex() {
+        let mut out = String::new();
+        decode_into(r#"\uZZZZ"#, &mut out);
+        assert_eq!(out, "\u{FFFD}");
+    }
+
+    #[test]
+    fn decode_trailing_backslash() {
+        let mut out = String::new();
+        decode_into("hello\\", &mut out);
+        assert_eq!(out, "hello");
+    }
+
+    #[test]
+    fn innermost_finds_nested_object() {
+        let stream = r#"{"outer":{"inner":{"target":1}}}"#;
+        let results = innermost_objects_with(stream, "\"target\":");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].contains("\"target\":1"));
+    }
+
+    #[test]
+    fn innermost_skips_containing_if_inner_exists() {
+        let stream = r#"{"a":{"x":1},"b":{"x":2}}"#;
+        let results = innermost_objects_with(stream, "\"x\":");
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn innermost_handles_strings_with_braces() {
+        let stream = r#"{"a":"{not a brace}","b":1}"#;
+        let results = innermost_objects_with(stream, "\"b\":");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], "{\"a\":\"{not a brace}\",\"b\":1}");
+    }
+
+    #[test]
+    fn innermost_no_match() {
+        let stream = r#"{"a":1}"#;
+        let results = innermost_objects_with(stream, "\"missing\":");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn first_array_finds_key() {
+        let stream = r#"garbage"rows":[{"id":1},{"id":2}]"#;
+        let result = first_array_after(stream, "rows");
+        assert_eq!(result, Some(r#"[{"id":1},{"id":2}]"#));
+    }
+
+    #[test]
+    fn first_array_skips_whitespace() {
+        let stream = r#"key: "rows":   [1, 2, 3] more"#;
+        let result = first_array_after(stream, "rows");
+        assert_eq!(result, Some("[1, 2, 3]"));
+    }
+
+    #[test]
+    fn first_array_missing_key() {
+        let stream = r#"{"data":[1]}"#;
+        let result = first_array_after(stream, "rows");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn first_array_no_bracket_after_key() {
+        let stream = r#"key: "rows": null"#;
+        let result = first_array_after(stream, "rows");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn first_array_nested_arrays() {
+        let stream = r#"data: "rows": [[1,2],[3,4]]"#;
+        let result = first_array_after(stream, "rows");
+        assert_eq!(result, Some("[[1,2],[3,4]]"));
+    }
+
+    #[test]
+    fn extract_stream_no_rsc_chunks() {
+        let result = extract_stream("<html>no data here</html>");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_stream_decodes_chunks() {
+        let html = r#"self.__next_f.push([1,"hello\nworld"])"#;
+        let result = extract_stream(html).unwrap();
+        assert_eq!(result, "hello\nworld");
+    }
+
     const AA_URL: &str = "https://artificialanalysis.ai/";
     const ARENA_URL: &str = "https://arena.ai/leaderboard/text";
 

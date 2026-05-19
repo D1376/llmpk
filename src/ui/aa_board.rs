@@ -11,7 +11,7 @@ use super::chart::{
     ChartRow,
 };
 use super::{
-    aa_metric, detail_line, fmt_f, fmt_price, fmt_tokens, header_cell, price_color, push_unique,
+    aa_metric, detail_line, fmt_f, fmt_price, fmt_tokens, header_cell, highlight_matches, price_color, push_unique,
     score_color, selected_row_style, truncate, AaKey, AppState,
 };
 use crate::aa;
@@ -111,42 +111,49 @@ fn aa_column_for_key(key: AaKey) -> AaColumn {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_aa_table(
     frame: &mut Frame,
     area: Rect,
-    models: &[aa::Model],
+    all_models: &[aa::Model],
+    indices: &[usize],
     table_state: &mut std::collections::HashMap<Board, TableState>,
     board: Board,
     sort_key: AaKey,
+    filter_tokens: &[String],
+    compact: bool,
 ) {
     let columns = aa_columns(area.width, sort_key);
     let header = Row::new(columns.iter().map(|column| header_cell(column.header())));
 
-    let rows = models
+    let rows = indices
         .iter()
         .enumerate()
-        .map(|(i, m)| Row::new(columns.iter().map(|column| aa_cell(*column, i, m))));
+        .filter_map(|(i, &idx)| {
+            all_models.get(idx).map(|m| Row::new(columns.iter().map(|column| aa_cell(*column, i, m, filter_tokens))))
+        });
 
     let widths: Vec<Constraint> = columns.iter().map(|column| column.width()).collect();
-    let title = format!("AA ({})", models.len());
+    let title = format!("AA ({})", indices.len());
 
+    let spacing = if compact { 0 } else { 1 };
     let table = Table::new(rows, widths)
         .header(header.height(1))
         .row_highlight_style(selected_row_style())
         .highlight_symbol("> ")
         .block(Block::default().borders(Borders::ALL).title(title))
-        .column_spacing(1);
+        .column_spacing(spacing);
 
     let st = table_state.entry(board).or_default();
     frame.render_stateful_widget(table, area, st);
 }
 
-fn aa_cell(column: AaColumn, index: usize, model: &aa::Model) -> Cell<'static> {
+fn aa_cell(column: AaColumn, index: usize, model: &aa::Model, filter_tokens: &[String]) -> Cell<'static> {
     match column {
         AaColumn::Index => {
             Cell::from(format!("{:>2}", index + 1)).style(Style::default().fg(Color::DarkGray))
         }
-        AaColumn::Model => Cell::from(model.name.clone()).style(Style::default().bold()),
+        AaColumn::Model => Cell::from(highlight_matches(&model.name, filter_tokens, Style::default().bold())),
         AaColumn::Provider => {
             Cell::from(model.provider().to_string()).style(Style::default().fg(Color::Magenta))
         }
@@ -156,7 +163,7 @@ fn aa_cell(column: AaColumn, index: usize, model: &aa::Model) -> Cell<'static> {
             Cell::from(fmt_f(model.speed(), 0)).style(Style::default().fg(Color::Blue))
         }
         AaColumn::Price => Cell::from(fmt_f(model.price_1m_blended_3_to_1, 2))
-            .style(price_color(model.price_1m_blended_3_to_1)),
+            .style(price_color(model.price_1m_blended_3_to_1, 2.0, 10.0)),
         AaColumn::Context => Cell::from(
             model
                 .context_window_tokens
@@ -182,6 +189,7 @@ pub(super) fn render_aa_detail(frame: &mut Frame, area: Rect, model: Option<&aa:
                 truncate(&model.name, max.max(8)),
                 Style::default().fg(Color::Cyan).bold(),
             ),
+            detail_line("ID", &model.id, Style::default().fg(Color::DarkGray)),
             Line::from(""),
             detail_line(
                 "Provider",
@@ -201,7 +209,7 @@ pub(super) fn render_aa_detail(frame: &mut Frame, area: Rect, model: Option<&aa:
             detail_line(
                 "Price",
                 fmt_price(model.price_1m_blended_3_to_1, 2, "/M"),
-                price_color(model.price_1m_blended_3_to_1),
+                price_color(model.price_1m_blended_3_to_1, 2.0, 10.0),
             ),
             detail_line(
                 "Context",
@@ -238,13 +246,14 @@ pub(super) fn render_aa_detail(frame: &mut Frame, area: Rect, model: Option<&aa:
     frame.render_widget(p, area);
 }
 
-pub(super) fn render_aa_chart(frame: &mut Frame, area: Rect, models: &[aa::Model], app: &AppState) {
+pub(super) fn render_aa_chart(frame: &mut Frame, area: Rect, all_models: &[aa::Model], indices: &[usize], app: &AppState) {
     let key = app.aa_sort.key;
     let (chart_area, summary_area) = split_chart_body(area);
     let max_bars = chart_capacity(chart_area);
-    let rows: Vec<ChartRow> = models
+    let rows: Vec<ChartRow> = indices
         .iter()
-        .filter_map(|m| {
+        .filter_map(|&idx| {
+            let m = all_models.get(idx)?;
             let value = aa_metric(m, key)?;
             Some(ChartRow {
                 name: m.name.clone(),
@@ -263,7 +272,7 @@ pub(super) fn render_aa_chart(frame: &mut Frame, area: Rect, models: &[aa::Model
         aa_key_label(key),
         app.aa_sort.dir.arrow(),
         rows.len(),
-        models.len(),
+        indices.len(),
     );
     let empty = format!(
         "no data for {} - switch sort key (i/s/p/c) or press m for table",
@@ -277,7 +286,7 @@ pub(super) fn render_aa_chart(frame: &mut Frame, area: Rect, models: &[aa::Model
             frame,
             summary_area,
             &rows,
-            models.len(),
+            indices.len(),
             aa_key_label(key),
             preference,
         );
