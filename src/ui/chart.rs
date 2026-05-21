@@ -1,12 +1,22 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Color, Style, Stylize},
-    text::Line,
-    widgets::{Bar, BarChart, BarGroup, Block, Borders, Paragraph, Wrap},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
 
-use super::{color_for_seed, detail_line, truncate};
+use super::{color_for_seed, truncate};
+
+const HEADER_LINES: u16 = 1;
+const RANK_WIDTH: usize = 3;
+const META_WIDTH: usize = 4;
+const VALUE_WIDTH: usize = 8;
+const NAME_VALUE_GAP: usize = 2;
+const MIN_NAME_WIDTH: usize = 8;
+const MAX_NAME_WIDTH: usize = 34;
+const MIN_BAR_WIDTH: usize = 8;
+const MAX_BAR_WIDTH: usize = 48;
 
 #[derive(Debug, Clone)]
 pub(super) struct ChartRow {
@@ -33,20 +43,11 @@ impl ChartPreference {
     }
 }
 
-pub(super) fn split_chart_body(area: Rect) -> (Rect, Option<Rect>) {
-    if area.width < 118 || area.height < 12 {
-        return (area, None);
-    }
-
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(72), Constraint::Length(34)])
-        .split(area);
-    (chunks[0], Some(chunks[1]))
-}
-
 pub(super) fn chart_capacity(area: Rect) -> usize {
-    (area.height as usize).saturating_sub(2).max(1)
+    area.height
+        .saturating_sub(2)
+        .saturating_sub(HEADER_LINES)
+        .max(1) as usize
 }
 
 pub(super) fn render_metric_chart(
@@ -57,124 +58,174 @@ pub(super) fn render_metric_chart(
     rows: &[ChartRow],
     preference: ChartPreference,
 ) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_bottom(preference.hint());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     if rows.is_empty() {
-        let p = Paragraph::new(empty.to_string())
+        let p = Paragraph::new(empty)
             .style(Style::default().fg(Color::Yellow))
-            .block(Block::default().borders(Borders::ALL).title("Chart"))
             .wrap(Wrap { trim: true });
-        frame.render_widget(p, area);
+        frame.render_widget(p, inner);
         return;
     }
 
-    let (min, max) = chart_bounds(rows);
-    let label_width = (area.width as usize).saturating_sub(24).clamp(10, 34);
-    let bars: Vec<Bar> = rows
-        .iter()
-        .enumerate()
-        .map(|(i, row)| {
-            let scaled = chart_bar_value(row.value, min, max, preference);
-            let label = format!("{:>2}. {}", i + 1, truncate(&row.name, label_width));
-            let color = row.color.unwrap_or_else(|| color_for_seed(&row.color_seed));
-            Bar::default()
-                .label(Line::from(label))
-                .value(scaled)
-                .text_value(row.value_label.clone())
-                .style(Style::default().fg(color))
-                .value_style(Style::default().fg(Color::Black).bg(color))
-        })
-        .collect();
-
-    let chart = BarChart::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_bottom(preference.hint()),
-        )
-        .data(BarGroup::default().bars(&bars))
-        .direction(Direction::Horizontal)
-        .bar_width(1)
-        .bar_gap(0)
-        .label_style(Style::default().fg(Color::Gray));
-
-    frame.render_widget(chart, area);
-}
-
-pub(super) fn render_chart_summary(
-    frame: &mut Frame,
-    area: Rect,
-    rows: &[ChartRow],
-    total: usize,
-    metric: &str,
-    preference: ChartPreference,
-) {
-    let lines = if let Some(lead) = rows.first() {
-        let (min, max) = chart_bounds(rows);
-        vec![
-            detail_line("Metric", metric, Style::default().fg(Color::Cyan).bold()),
-            detail_line("Mode", preference.hint(), Style::default().fg(Color::Gray)),
-            detail_line(
-                "Shown",
-                format!("{}/{}", rows.len(), total),
-                Style::default().fg(Color::Green),
-            ),
-            Line::from(""),
-            Line::styled("Top row", Style::default().fg(Color::DarkGray)),
-            Line::styled(
-                truncate(&lead.name, area.width.saturating_sub(4) as usize),
-                Style::default().fg(Color::Cyan).bold(),
-            ),
-            detail_line(
-                "Value",
-                lead.value_label.clone(),
-                Style::default().fg(Color::Yellow),
-            ),
-            detail_line(
-                "Group",
-                lead.meta.clone(),
-                Style::default().fg(Color::Magenta),
-            ),
-            Line::from(""),
-            detail_line(
-                "Range",
-                format!(
-                    "{} - {}",
-                    format_chart_number(min),
-                    format_chart_number(max)
-                ),
-                Style::default().fg(Color::Gray),
-            ),
-        ]
+    let max_rows = row_capacity(inner);
+    let lines = if horizontal_layout(inner.width as usize, rows, max_rows).is_some() {
+        horizontal_chart_lines(rows, preference, inner)
     } else {
-        vec![Line::styled(
-            "No chartable rows",
-            Style::default().fg(Color::DarkGray),
-        )]
+        compact_chart_lines(rows, preference, inner)
     };
 
-    let p = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Chart stats"))
-        .wrap(Wrap { trim: true });
-    frame.render_widget(p, area);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn compact_chart_lines(
+    rows: &[ChartRow],
+    preference: ChartPreference,
+    area: Rect,
+) -> Vec<Line<'static>> {
+    let max_name = area.width.saturating_sub(14) as usize;
+    let max_rows = row_capacity(area);
+    let (min, max) = chart_bounds(rows);
+    let mut lines = vec![Line::styled(
+        format!(
+            "Top {} visible | range {} - {} | {}",
+            rows.len(),
+            format_chart_number(min),
+            format_chart_number(max),
+            preference.hint()
+        ),
+        Style::default().fg(Color::DarkGray),
+    )];
+
+    for (i, row) in rows.iter().take(max_rows).enumerate() {
+        let color = row.color.unwrap_or_else(|| color_for_seed(&row.color_seed));
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{:>2} ", i + 1),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                format!("{:<8} ", truncate(&row.value_label, 8)),
+                Style::default().fg(color).bold(),
+            ),
+            Span::styled(truncate(&row.name, max_name), Style::default()),
+        ]));
+    }
+    lines
+}
+
+fn horizontal_chart_lines(
+    rows: &[ChartRow],
+    preference: ChartPreference,
+    area: Rect,
+) -> Vec<Line<'static>> {
+    let max_rows = row_capacity(area);
+    let layout = horizontal_layout(area.width as usize, rows, max_rows).expect("checked by caller");
+    let (min, max) = chart_bounds(rows);
+    let mut lines = vec![Line::styled(
+        format!(
+            "Top {} visible | range {} - {} | {}",
+            rows.len(),
+            format_chart_number(min),
+            format_chart_number(max),
+            preference.hint()
+        ),
+        Style::default().fg(Color::DarkGray),
+    )];
+
+    for (i, row) in rows.iter().take(max_rows).enumerate() {
+        let color = row.color.unwrap_or_else(|| color_for_seed(&row.color_seed));
+        let bar_len = chart_bar_len(row.value, min, max, layout.bar_width, preference);
+        let meta = short_meta(&row.meta, META_WIDTH);
+        let name = truncate(&row.name, layout.name_width);
+        let value = truncate(&row.value_label, VALUE_WIDTH);
+        let mut spans = Vec::new();
+        spans.push(Span::styled(
+            format!("{:>2} ", i + 1),
+            Style::default().fg(Color::DarkGray),
+        ));
+        spans.push(Span::styled(
+            format!("{:<META_WIDTH$} ", meta),
+            Style::default().fg(color).bold(),
+        ));
+        spans.push(Span::styled(
+            format!("{:<width$}", name, width = layout.name_width),
+            Style::default(),
+        ));
+        spans.push(Span::raw(" ".repeat(NAME_VALUE_GAP)));
+        spans.push(Span::styled(
+            format!("{:>VALUE_WIDTH$} ", value),
+            Style::default().fg(color).bold(),
+        ));
+        spans.push(Span::styled(
+            "█".repeat(bar_len),
+            Style::default().fg(color),
+        ));
+        lines.push(Line::from(spans));
+    }
+    lines
+}
+
+fn short_meta(meta: &str, width: usize) -> String {
+    let cleaned = meta.trim();
+    let label = match cleaned.to_ascii_lowercase().as_str() {
+        "anthropic" => "ANT".to_string(),
+        "openai" => "OAI".to_string(),
+        "google" => "GOO".to_string(),
+        "deepseek" => "DS".to_string(),
+        "xai" => "xAI".to_string(),
+        "meta" => "META".to_string(),
+        "mistral" => "MIS".to_string(),
+        "nvidia" => "NV".to_string(),
+        "amazon" | "aws" => "AWS".to_string(),
+        "alibaba" => "ALI".to_string(),
+        "?" | "" => "?".to_string(),
+        _ => cleaned
+            .chars()
+            .take(3)
+            .collect::<String>()
+            .to_ascii_uppercase(),
+    };
+    truncate(&label, width)
 }
 
 pub(super) fn chart_bounds(rows: &[ChartRow]) -> (f64, f64) {
-    rows.iter()
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), row| {
-            (min.min(row.value), max.max(row.value))
-        })
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for value in rows.iter().map(|row| row.value).filter(|v| v.is_finite()) {
+        min = min.min(value);
+        max = max.max(value);
+    }
+    if min.is_finite() && max.is_finite() {
+        (min, max)
+    } else {
+        (0.0, 0.0)
+    }
 }
 
-pub(super) fn chart_bar_value(value: f64, min: f64, max: f64, preference: ChartPreference) -> u64 {
-    if !min.is_finite() || !max.is_finite() || (max - min).abs() < f64::EPSILON {
-        return 1000;
+pub(super) fn chart_bar_len(
+    value: f64,
+    min: f64,
+    max: f64,
+    width: usize,
+    preference: ChartPreference,
+) -> usize {
+    if width == 0 || !value.is_finite() || !min.is_finite() || !max.is_finite() {
+        return 0;
     }
-
+    if (max - min).abs() < f64::EPSILON {
+        return width;
+    }
     let normalized = match preference {
         ChartPreference::Higher => (value - min) / (max - min),
         ChartPreference::Lower => (max - value) / (max - min),
     };
-    (normalized.clamp(0.0, 1.0) * 999.0).round() as u64 + 1
+    ((normalized.clamp(0.0, 1.0) * width as f64).round() as usize).clamp(1, width)
 }
 
 pub(super) fn format_chart_number(value: f64) -> String {
@@ -189,4 +240,36 @@ pub(super) fn format_chart_number(value: f64) -> String {
     } else {
         format!("{value:.2}")
     }
+}
+
+fn row_capacity(area: Rect) -> usize {
+    area.height.saturating_sub(HEADER_LINES).max(1) as usize
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HorizontalLayout {
+    name_width: usize,
+    bar_width: usize,
+}
+
+fn horizontal_layout(width: usize, rows: &[ChartRow], max_rows: usize) -> Option<HorizontalLayout> {
+    let fixed = RANK_WIDTH + META_WIDTH + 1 + NAME_VALUE_GAP + VALUE_WIDTH + 1;
+    let flexible = width.checked_sub(fixed)?;
+    if flexible < MIN_NAME_WIDTH + MIN_BAR_WIDTH {
+        return None;
+    }
+
+    let longest_visible_name = rows
+        .iter()
+        .take(max_rows)
+        .map(|row| row.name.chars().count())
+        .max()
+        .unwrap_or(MIN_NAME_WIDTH);
+    let max_name = MAX_NAME_WIDTH.min(flexible - MIN_BAR_WIDTH);
+    let name_width = longest_visible_name.clamp(MIN_NAME_WIDTH, max_name);
+    let bar_width = (flexible - name_width).clamp(MIN_BAR_WIDTH, MAX_BAR_WIDTH);
+    Some(HorizontalLayout {
+        name_width,
+        bar_width,
+    })
 }

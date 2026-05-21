@@ -23,7 +23,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use board::{Board, Status};
-use ui::{AppState, View};
+use ui::AppState;
 
 type Msg = (Board, anyhow::Result<board::Data>);
 
@@ -183,16 +183,6 @@ fn handle_key(
         }
         KeyCode::Char(c @ ('a' | 'c' | 'i' | 'p' | 's' | 't' | 'u')) => {
             app.cycle_sort(c);
-        }
-        KeyCode::Tab
-            if app.current_board() == Board::AaAgents && app.current_view() == View::Table =>
-        {
-            app.radar_scroll_down();
-        }
-        KeyCode::BackTab
-            if app.current_board() == Board::AaAgents && app.current_view() == View::Table =>
-        {
-            app.radar_scroll_up();
         }
         KeyCode::Char(_) => {}
         _ => {}

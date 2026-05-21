@@ -6,13 +6,11 @@ use ratatui::{
     Frame,
 };
 
-use super::chart::{
-    chart_capacity, render_chart_summary, render_metric_chart, split_chart_body, ChartPreference,
-    ChartRow,
-};
+use super::chart::{chart_capacity, render_metric_chart, ChartPreference, ChartRow};
 use super::{
-    aa_metric, detail_line, fmt_f, fmt_price, fmt_tokens, header_cell, highlight_matches,
-    price_color, push_unique, score_color, selected_row_style, truncate, AaKey, AppState,
+    aa_metric, accent_color_for_provider, color_from_hex, detail_line, fmt_f, fmt_price,
+    fmt_tokens, header_cell, highlight_matches, price_color, push_unique,
+    readable_color_for_dark_bg, score_color, selected_row_style, truncate, AaKey, AppState,
 };
 use crate::aa;
 use crate::board::Board;
@@ -166,9 +164,8 @@ fn aa_cell(
             filter_tokens,
             Style::default().bold(),
         )),
-        AaColumn::Provider => {
-            Cell::from(model.provider().to_string()).style(Style::default().fg(Color::Magenta))
-        }
+        AaColumn::Provider => Cell::from(model.provider().to_string())
+            .style(provider_style(model.provider(), aa_model_color(model))),
         AaColumn::Intelligence => Cell::from(fmt_f(model.intelligence_index, 1))
             .style(score_color(model.intelligence_index, 30.0, 60.0)),
         AaColumn::Speed => {
@@ -209,7 +206,7 @@ pub(super) fn render_aa_detail(frame: &mut Frame, area: Rect, model: Option<&aa:
             detail_line(
                 "Provider",
                 model.provider(),
-                Style::default().fg(Color::Magenta),
+                provider_style(model.provider(), aa_model_color(model)),
             ),
             detail_line(
                 "Intel",
@@ -269,19 +266,21 @@ pub(super) fn render_aa_chart(
     app: &AppState,
 ) {
     let key = app.aa_sort.key;
-    let (chart_area, summary_area) = split_chart_body(area);
-    let max_bars = chart_capacity(chart_area);
+    let max_bars = chart_capacity(area);
     let rows: Vec<ChartRow> = indices
         .iter()
         .filter_map(|&idx| {
             let m = all_models.get(idx)?;
             let value = aa_metric(m, key)?;
+            if !value.is_finite() {
+                return None;
+            }
             Some(ChartRow {
                 name: m.name.clone(),
                 meta: m.provider().to_string(),
                 value,
                 value_label: aa_chart_text_value(m, key),
-                color: None,
+                color: aa_model_color(m),
                 color_seed: m.id.clone(),
             })
         })
@@ -300,18 +299,27 @@ pub(super) fn render_aa_chart(
         aa_key_label(key)
     );
     let preference = aa_chart_preference(key);
-    render_metric_chart(frame, chart_area, &title, &empty, &rows, preference);
+    render_metric_chart(frame, area, &title, &empty, &rows, preference);
+}
 
-    if let Some(summary_area) = summary_area {
-        render_chart_summary(
-            frame,
-            summary_area,
-            &rows,
-            indices.len(),
-            aa_key_label(key),
-            preference,
-        );
-    }
+fn aa_model_color(model: &aa::Model) -> Option<Color> {
+    model
+        .provider_color()
+        .and_then(color_from_hex)
+        .map(readable_color_for_dark_bg)
+        .or_else(|| accent_color_for_provider(model.provider()))
+}
+
+fn provider_style(provider: &str, color: Option<Color>) -> Style {
+    Style::default()
+        .fg(color.unwrap_or(Color::Magenta))
+        .add_modifier(
+            if accent_color_for_provider(provider).is_some() || color.is_some() {
+                ratatui::style::Modifier::BOLD
+            } else {
+                ratatui::style::Modifier::empty()
+            },
+        )
 }
 
 fn aa_chart_preference(key: AaKey) -> ChartPreference {

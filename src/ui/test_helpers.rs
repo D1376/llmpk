@@ -7,6 +7,7 @@ pub fn aa_model(id: &str, name: &str, provider: &str) -> aa::Model {
         name: name.to_string(),
         model_creators: Some(aa::Creator {
             name: provider.to_string(),
+            color: None,
         }),
         intelligence_index: Some(50.0),
         timescale: Some(aa::Timescale {
@@ -34,6 +35,9 @@ pub fn agent_row(id: &str, agent: &str, provider: &str) -> coding_agents::AgentR
         display: coding_agents::AgentDisplay {
             agent: Some(agent.to_string()),
             model: Some(format!("{provider} Model")),
+            creator: Some(coding_agents::AgentCreator {
+                model: Some(provider.to_string()),
+            }),
         },
         mean: coding_agents::AgentMean {
             reward: Some(0.55),

@@ -12,7 +12,7 @@ pub struct Model {
     pub id: String,
     #[serde(default)]
     pub name: String,
-    #[serde(default)]
+    #[serde(default, alias = "modelCreators")]
     pub model_creators: Option<Creator>,
     #[serde(default)]
     pub intelligence_index: Option<f64>,
@@ -32,6 +32,8 @@ pub struct Model {
 pub struct Creator {
     #[serde(default)]
     pub name: String,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -46,6 +48,12 @@ impl Model {
             .as_ref()
             .map(|c| c.name.as_str())
             .unwrap_or("?")
+    }
+
+    pub fn provider_color(&self) -> Option<&str> {
+        self.model_creators
+            .as_ref()
+            .and_then(|c| c.color.as_deref())
     }
 
     pub fn speed(&self) -> Option<f64> {
@@ -102,6 +110,11 @@ mod tests {
             models.len()
         );
         assert!(models.iter().any(|m| m.id == "claude-sonnet-4"));
+        let claude = models
+            .iter()
+            .find(|m| m.id == "claude-sonnet-4")
+            .expect("fixture should include Claude");
+        assert_eq!(claude.provider_color(), Some("#cc785c"));
     }
 
     #[test]

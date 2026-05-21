@@ -385,6 +385,7 @@ mod tests {
     /// Benchmark: regex compiled per call (old) vs static regex (new).
     /// Run with: LLMPK_BENCH=1 cargo test bench_regex -- --nocapture
     #[test]
+    #[allow(clippy::regex_creation_in_loops)]
     fn bench_regex() {
         if std::env::var("LLMPK_BENCH").is_err() {
             return;

@@ -39,6 +39,14 @@ pub struct AgentDisplay {
     pub agent: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub creator: Option<AgentCreator>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AgentCreator {
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -75,6 +83,10 @@ impl AgentRow {
 
     pub fn provider(&self) -> &str {
         first_nonempty([
+            self.display
+                .creator
+                .as_ref()
+                .and_then(|creator| creator.model.as_deref()),
             self.host_short_name.as_deref(),
             self.host_name.as_deref(),
             self.provider.as_deref(),
@@ -132,6 +144,11 @@ mod tests {
         let rows = parse(html).expect("parse committed fixture");
         assert!(rows.len() >= 2, "expected >=2 rows, got {}", rows.len());
         assert!(rows.iter().any(|r| r.id == "claude-code"));
+        let cursor = rows
+            .iter()
+            .find(|r| r.id == "cursor-cli")
+            .expect("fixture should include Cursor CLI");
+        assert_eq!(cursor.provider(), "Anthropic");
     }
 
     #[test]

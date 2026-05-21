@@ -98,16 +98,11 @@ fn render_body(frame: &mut Frame, area: Rect, app: &mut AppState) {
                 chrome::render_filter_empty(frame, area, &query);
                 return;
             }
-            let selected = table_state
-                .get(&board)
-                .and_then(TableState::selected)
-                .unwrap_or(0);
             match view {
                 View::Table => {
-                    let (table_area, radar_area) = split_agents_table_body(area);
                     agents::render_agents_table(
                         frame,
-                        table_area,
+                        area,
                         rows,
                         &indices,
                         table_state,
@@ -116,16 +111,6 @@ fn render_body(frame: &mut Frame, area: Rect, app: &mut AppState) {
                         &filter_tokens,
                         app.compact,
                     );
-                    if let Some(radar_area) = radar_area {
-                        agents::render_agents_radar_panel(
-                            frame,
-                            radar_area,
-                            rows,
-                            &indices,
-                            selected,
-                            app.radar_offset,
-                        );
-                    }
                 }
                 View::Chart => agents::render_agents_chart(frame, area, rows, &indices, app),
             }
@@ -147,18 +132,6 @@ fn split_body(area: Rect) -> (Rect, Option<Rect>) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(72), Constraint::Length(34)])
-        .split(area);
-    (chunks[0], Some(chunks[1]))
-}
-
-fn split_agents_table_body(area: Rect) -> (Rect, Option<Rect>) {
-    if area.width < 126 || area.height < 16 {
-        return (area, None);
-    }
-
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(74), Constraint::Length(46)])
         .split(area);
     (chunks[0], Some(chunks[1]))
 }
@@ -203,6 +176,96 @@ pub(crate) fn color_for_seed(seed: &str) -> Color {
         h = h.wrapping_mul(1099511628211);
     }
     PALETTE[(h as usize) % PALETTE.len()]
+}
+
+pub(crate) fn color_from_hex(hex: &str) -> Option<Color> {
+    let hex = hex.trim().trim_start_matches('#');
+    let bytes = hex.as_bytes();
+    if bytes.len() != 6 && bytes.len() != 8 {
+        return None;
+    }
+    let r = parse_hex_byte(bytes, 0)?;
+    let g = parse_hex_byte(bytes, 2)?;
+    let b = parse_hex_byte(bytes, 4)?;
+    Some(Color::Rgb(r, g, b))
+}
+
+fn parse_hex_byte(bytes: &[u8], offset: usize) -> Option<u8> {
+    Some(hex_nibble(bytes[offset])? << 4 | hex_nibble(bytes[offset + 1])?)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+pub(crate) fn readable_color_for_dark_bg(color: Color) -> Color {
+    const MIN_LUMA: f64 = 128.0;
+
+    match color {
+        Color::Black | Color::DarkGray => Color::Gray,
+        Color::Rgb(r, g, b) => {
+            let luma = rgb_luma(r, g, b);
+            if luma >= MIN_LUMA {
+                return color;
+            }
+
+            let mix = ((MIN_LUMA - luma) / (255.0 - luma)).clamp(0.0, 1.0);
+            Color::Rgb(
+                lift_channel(r, mix),
+                lift_channel(g, mix),
+                lift_channel(b, mix),
+            )
+        }
+        _ => color,
+    }
+}
+
+pub(crate) fn accent_color_for_provider(provider: &str) -> Option<Color> {
+    let color = match normalized_provider(provider).as_str() {
+        "openai" => Color::Rgb(0x1f, 0x1f, 0x1f),
+        "anthropic" => Color::Rgb(0xcc, 0x78, 0x5c),
+        "google" => Color::Rgb(0x34, 0xa8, 0x53),
+        "meta" => Color::Rgb(0x00, 0x89, 0xf4),
+        "deepseek" => Color::Rgb(0x22, 0x43, 0xe6),
+        "mistral" => Color::Rgb(0xfd, 0x6f, 0x00),
+        "xai" => Color::Rgb(0x73, 0x6c, 0xd3),
+        "amazon" | "aws" | "amazonbedrock" => Color::Rgb(0xff, 0x99, 0x00),
+        "microsoft" | "azure" | "microsoftazure" => Color::Rgb(0x00, 0x78, 0xd5),
+        "minimax" => Color::Rgb(0xeb, 0x35, 0x68),
+        "nvidia" => Color::Rgb(0x86, 0xb7, 0x37),
+        "kimi" | "moonshot" | "moonshotai" => Color::Rgb(0x04, 0x7a, 0xfe),
+        "alibaba" | "qwen" | "alibabacloud" => Color::Rgb(0xff, 0x70, 0x18),
+        "zai" | "z" | "zhipu" | "zhipuai" => Color::Rgb(0x1c, 0x7f, 0xf8),
+        "upstage" => Color::Rgb(0x7c, 0x59, 0xf5),
+        "ibm" => Color::Rgb(0x0f, 0x62, 0xfe),
+        "stepfun" => Color::Rgb(0x01, 0x7a, 0xff),
+        "perplexity" => Color::Rgb(0x1b, 0x81, 0x8e),
+        "cohere" => Color::Rgb(0x39, 0x60, 0x99),
+        "xaiinc" => Color::Rgb(0x73, 0x6c, 0xd3),
+        _ => return None,
+    };
+    Some(readable_color_for_dark_bg(color))
+}
+
+fn normalized_provider(provider: &str) -> String {
+    provider
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn rgb_luma(r: u8, g: u8, b: u8) -> f64 {
+    f64::from(r) * 0.2126 + f64::from(g) * 0.7152 + f64::from(b) * 0.0722
+}
+
+fn lift_channel(channel: u8, mix: f64) -> u8 {
+    (f64::from(channel) + (255.0 - f64::from(channel)) * mix).round() as u8
 }
 
 pub(crate) fn truncate(s: &str, n: usize) -> String {
@@ -348,17 +411,137 @@ pub(crate) fn highlight_matches(text: &str, tokens: &[String], base_style: Style
 
 #[cfg(test)]
 mod tests {
-    use super::chart::{chart_bar_value, ChartPreference};
+    use super::chart::{
+        chart_bar_len, chart_capacity, render_metric_chart, ChartPreference, ChartRow,
+    };
     use super::test_helpers::*;
     use super::*;
     use crate::board::Board;
 
     #[test]
-    fn lower_is_better_chart_values_prefer_smaller_metrics() {
-        let cheap = chart_bar_value(1.0, 1.0, 10.0, ChartPreference::Lower);
-        let expensive = chart_bar_value(10.0, 1.0, 10.0, ChartPreference::Lower);
+    fn parses_hex_colors_and_maps_provider_accents() {
+        assert_eq!(
+            color_from_hex("#cc785c"),
+            Some(Color::Rgb(0xcc, 0x78, 0x5c))
+        );
+        assert_eq!(
+            color_from_hex("#7b61ff00"),
+            Some(Color::Rgb(0x7b, 0x61, 0xff))
+        );
+        assert_eq!(
+            accent_color_for_provider("Z.ai"),
+            Some(readable_color_for_dark_bg(Color::Rgb(0x1c, 0x7f, 0xf8)))
+        );
+        assert_eq!(
+            accent_color_for_provider("Moonshot AI"),
+            Some(readable_color_for_dark_bg(Color::Rgb(0x04, 0x7a, 0xfe)))
+        );
+        assert_eq!(color_from_hex("#nothex"), None);
+        assert_eq!(color_from_hex("aébcd"), None);
+    }
 
-        assert!(cheap > expensive);
+    #[test]
+    fn dark_provider_accents_are_lifted_for_black_backgrounds() {
+        assert_eq!(
+            readable_color_for_dark_bg(Color::Rgb(0x1f, 0x1f, 0x1f)),
+            Color::Rgb(0x80, 0x80, 0x80)
+        );
+        assert_eq!(
+            readable_color_for_dark_bg(Color::Rgb(0xcc, 0x78, 0x5c)),
+            Color::Rgb(0xcc, 0x78, 0x5c)
+        );
+        assert_eq!(
+            accent_color_for_provider("OpenAI"),
+            Some(Color::Rgb(0x80, 0x80, 0x80))
+        );
+    }
+
+    #[test]
+    fn horizontal_chart_capacity_scales_with_height() {
+        let short = chart_capacity(Rect::new(0, 0, 120, 12));
+        let tall = chart_capacity(Rect::new(0, 0, 120, 24));
+        let narrow_same_height = chart_capacity(Rect::new(0, 0, 70, 24));
+
+        assert!(tall > short);
+        assert_eq!(tall, narrow_same_height);
+        assert!(short >= 1);
+    }
+
+    #[test]
+    fn chart_bar_lengths_handle_direction_and_equal_ranges() {
+        let high_better = chart_bar_len(10.0, 1.0, 10.0, 12, ChartPreference::Higher);
+        let low_better = chart_bar_len(1.0, 1.0, 10.0, 12, ChartPreference::Lower);
+        let equal = chart_bar_len(5.0, 5.0, 5.0, 12, ChartPreference::Higher);
+        let missing = chart_bar_len(f64::NAN, 1.0, 10.0, 12, ChartPreference::Higher);
+
+        assert_eq!(high_better, 12);
+        assert_eq!(low_better, 12);
+        assert_eq!(equal, 12);
+        assert_eq!(missing, 0);
+    }
+
+    #[test]
+    fn narrow_chart_uses_compact_text_without_bars() {
+        let rows = vec![ChartRow {
+            name: "Very Long Model Name".to_string(),
+            meta: "Anthropic".to_string(),
+            value: 50.0,
+            value_label: "50.0".to_string(),
+            color: Some(Color::Rgb(0xcc, 0x78, 0x5c)),
+            color_seed: "claude".to_string(),
+        }];
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(36, 8)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_metric_chart(
+                    frame,
+                    Rect::new(0, 0, 36, 8),
+                    "chart",
+                    "empty",
+                    &rows,
+                    ChartPreference::Higher,
+                )
+            })
+            .unwrap();
+        let text = rendered_text(terminal.backend());
+
+        assert!(text.contains("Top 1 visible"));
+        assert!(text.contains("50.0"));
+        assert!(text.contains("Very Long Model"));
+        assert!(!text.contains("█"));
+    }
+
+    #[test]
+    fn wide_chart_keeps_value_close_to_label() {
+        let rows = vec![ChartRow {
+            name: "Codex".to_string(),
+            meta: "OpenAI".to_string(),
+            value: 60.0,
+            value_label: "60.0".to_string(),
+            color: Some(Color::Rgb(0xbe, 0xa5, 0xff)),
+            color_seed: "codex".to_string(),
+        }];
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 8)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_metric_chart(
+                    frame,
+                    Rect::new(0, 0, 100, 8),
+                    "chart",
+                    "empty",
+                    &rows,
+                    ChartPreference::Higher,
+                )
+            })
+            .unwrap();
+
+        let line = rendered_line(terminal.backend(), 100, 2);
+        let name_pos = line.find("Codex").expect("row should include chart label");
+        let value_pos = line.find("60.0").expect("row should include value");
+
+        assert!(value_pos - (name_pos + "Codex".len()) <= 14);
     }
 
     #[test]
@@ -414,6 +597,30 @@ mod tests {
     }
 
     #[test]
+    fn render_draws_aa_chart_view() {
+        let mut app = AppState::new();
+        app.set_status(
+            Board::Aa,
+            Status::Loaded(Data::Aa(vec![
+                aa_model("claude-sonnet", "Claude Sonnet", "Anthropic"),
+                aa_model("gpt-5", "GPT-5", "OpenAI"),
+            ])),
+        );
+        app.toggle_view();
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(132, 32)).unwrap();
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        let text = rendered_text(terminal.backend());
+
+        assert!(text.contains("AA chart"));
+        assert!(text.contains("Top 2 visible"));
+        assert!(text.contains("Claude Sonnet"));
+        assert!(text.contains("50.0"));
+        assert!(text.contains("view: chart"));
+    }
+
+    #[test]
     fn render_draws_agents_chart_view() {
         let mut app = AppState::new();
         app.select_board(1);
@@ -432,13 +639,14 @@ mod tests {
         let text = rendered_text(terminal.backend());
 
         assert!(text.contains("AA Agents chart"));
-        assert!(text.contains("Chart stats"));
+        assert!(text.contains("Top 2 visible"));
         assert!(text.contains("view: chart"));
         assert!(text.contains("Claude Code"));
+        assert!(text.contains("60.0"));
     }
 
     #[test]
-    fn render_draws_agents_table_radar_panel() {
+    fn render_draws_agents_table_without_radar_panel() {
         let mut app = AppState::new();
         app.select_board(1);
         app.set_status(
@@ -459,9 +667,8 @@ mod tests {
         let text = rendered_text(terminal.backend());
 
         assert!(text.contains("AA Agents ("));
-        assert!(text.contains("Radar"));
-        assert!(text.contains("Legend"));
-        assert!(text.contains("Visible"));
+        assert!(!text.contains("Radar"));
+        assert!(!text.contains("Legend"));
         assert!(text.contains("Claude Code"));
         assert!(text.contains("Codex"));
     }
@@ -470,6 +677,13 @@ mod tests {
         backend
             .buffer()
             .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    fn rendered_line(backend: &ratatui::backend::TestBackend, width: usize, row: usize) -> String {
+        backend.buffer().content()[row * width..(row + 1) * width]
             .iter()
             .map(|cell| cell.symbol())
             .collect()

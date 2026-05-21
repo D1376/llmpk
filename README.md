@@ -28,8 +28,8 @@ No API keys. No headless browser. No JavaScript runtime. Just HTTP and regex.
 
 - **12 leaderboard boards** — Artificial Analysis models, Artificial Analysis coding agents, and Arena (text, search, vision, document, code, text-to-image, image-edit, text-to-video, image-to-video, video-edit)
 - **Parallel fetching** — all 12 boards load simultaneously on startup, cached for the session
-- **Table and chart views** — toggle with `m`
-- **AA Agents radar panel** — wide terminals show a top-5 multi-metric comparison beside the coding-agents table
+- **Table and full-width horizontal chart views** — toggle with `m`
+- **Provider-aware colors** — AA provider colors and agent creator/provider accents carry into tables and charts
 - **Per-board filtering** — type `/` to filter, `Ctrl-U` to clear
 - **Responsive layout** — adapts columns and detail pane to terminal size
 - **Sorting** — by any metric, ascending or descending
@@ -123,6 +123,7 @@ llmpk:
 2. Extracts all RSC push chunks with a regex
 3. Decodes JS string escapes and concatenates into a single stream
 4. Parses the JSON data directly from the stream — no browser, no JS engine
+5. Preserves provider metadata where available so table and chart colors stay tied to the underlying model or agent creator
 
 This is inherently fragile. If either site changes its markup, the scraper breaks. That's a feature, not a bug — it surfaces real breakage instead of hiding it behind retries.
 
@@ -163,9 +164,9 @@ src/
   board.rs          Board enum, Data/Status wrappers, fetch dispatch
   ui.rs             AppState, sort/filter state, render dispatch, shared helpers
   ui/aa_board.rs    AA table/detail/chart rendering
-  ui/agents.rs      Agents table/radar/chart rendering, brand colors
+  ui/agents.rs      Agents table/chart rendering, brand colors
   ui/arena_board.rs Arena table/detail/chart rendering
-  ui/chart.rs       Shared chart infrastructure (ChartRow, bar charts)
+  ui/chart.rs       Shared horizontal chart infrastructure
   ui/chrome.rs      Tabs, header, footer, help overlay, loading/error screens
 ```
 

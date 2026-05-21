@@ -4,7 +4,6 @@ use ratatui::widgets::TableState;
 
 use crate::board::{Board, Data, Status};
 
-use super::agents::RADAR_LIMIT;
 use super::filter::*;
 use super::sort::*;
 
@@ -23,7 +22,6 @@ pub struct AppState {
     pub filters: HashMap<Board, String>,
     pub filter_editing: bool,
     pub help_open: bool,
-    pub radar_offset: usize,
     pub compact: bool,
     pub aa_sort: AaSort,
     pub agent_sort: AgentSort,
@@ -42,7 +40,6 @@ impl AppState {
             filters: HashMap::new(),
             filter_editing: false,
             help_open: false,
-            radar_offset: 0,
             compact: false,
             aa_sort: AaSort {
                 key: AaKey::Intelligence,
@@ -111,7 +108,6 @@ impl AppState {
             return;
         }
         self.current = idx;
-        self.radar_offset = 0;
         self.clamp_selection(self.current_board());
     }
 
@@ -119,23 +115,7 @@ impl AppState {
         let n = self.boards.len() as i32;
         let next = ((self.current as i32 + delta).rem_euclid(n)) as usize;
         self.current = next;
-        self.radar_offset = 0;
         self.clamp_selection(self.current_board());
-    }
-
-    pub fn radar_scroll_down(&mut self) {
-        let board = self.current_board();
-        let total = match self.status.get(&board) {
-            Some(Status::Loaded(Data::AaAgents(rows))) => rows.len(),
-            _ => return,
-        };
-        if total > RADAR_LIMIT {
-            self.radar_offset = (self.radar_offset + 1).min(total - RADAR_LIMIT);
-        }
-    }
-
-    pub fn radar_scroll_up(&mut self) {
-        self.radar_offset = self.radar_offset.saturating_sub(1);
     }
 
     pub fn move_down(&mut self) {
