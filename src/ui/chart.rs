@@ -10,9 +10,10 @@ use super::{color_for_seed, truncate};
 
 const HEADER_LINES: u16 = 1;
 const RANK_WIDTH: usize = 3;
-const META_WIDTH: usize = 4;
 const VALUE_WIDTH: usize = 8;
 const NAME_VALUE_GAP: usize = 2;
+const MIN_META_WIDTH: usize = 3;
+const MAX_META_WIDTH: usize = 18;
 const MIN_NAME_WIDTH: usize = 8;
 const MAX_NAME_WIDTH: usize = 34;
 const MIN_BAR_WIDTH: usize = 8;
@@ -141,7 +142,7 @@ fn horizontal_chart_lines(
     for (i, row) in rows.iter().take(max_rows).enumerate() {
         let color = row.color.unwrap_or_else(|| color_for_seed(&row.color_seed));
         let bar_len = chart_bar_len(row.value, min, max, layout.bar_width, preference);
-        let meta = short_meta(&row.meta, META_WIDTH);
+        let meta = truncate(&row.meta, layout.meta_width);
         let name = truncate(&row.name, layout.name_width);
         let value = truncate(&row.value_label, VALUE_WIDTH);
         let mut spans = Vec::new();
@@ -150,7 +151,7 @@ fn horizontal_chart_lines(
             Style::default().fg(Color::DarkGray),
         ));
         spans.push(Span::styled(
-            format!("{:<META_WIDTH$} ", meta),
+            format!("{:<width$} ", meta, width = layout.meta_width),
             Style::default().fg(color).bold(),
         ));
         spans.push(Span::styled(
@@ -169,29 +170,6 @@ fn horizontal_chart_lines(
         lines.push(Line::from(spans));
     }
     lines
-}
-
-fn short_meta(meta: &str, width: usize) -> String {
-    let cleaned = meta.trim();
-    let label = match cleaned.to_ascii_lowercase().as_str() {
-        "anthropic" => "ANT".to_string(),
-        "openai" => "OAI".to_string(),
-        "google" => "GOO".to_string(),
-        "deepseek" => "DS".to_string(),
-        "xai" => "xAI".to_string(),
-        "meta" => "META".to_string(),
-        "mistral" => "MIS".to_string(),
-        "nvidia" => "NV".to_string(),
-        "amazon" | "aws" => "AWS".to_string(),
-        "alibaba" => "ALI".to_string(),
-        "?" | "" => "?".to_string(),
-        _ => cleaned
-            .chars()
-            .take(3)
-            .collect::<String>()
-            .to_ascii_uppercase(),
-    };
-    truncate(&label, width)
 }
 
 pub(super) fn chart_bounds(rows: &[ChartRow]) -> (f64, f64) {
@@ -248,12 +226,20 @@ fn row_capacity(area: Rect) -> usize {
 
 #[derive(Debug, Clone, Copy)]
 struct HorizontalLayout {
+    meta_width: usize,
     name_width: usize,
     bar_width: usize,
 }
 
 fn horizontal_layout(width: usize, rows: &[ChartRow], max_rows: usize) -> Option<HorizontalLayout> {
-    let fixed = RANK_WIDTH + META_WIDTH + 1 + NAME_VALUE_GAP + VALUE_WIDTH + 1;
+    let longest_visible_meta = rows
+        .iter()
+        .take(max_rows)
+        .map(|row| row.meta.chars().count())
+        .max()
+        .unwrap_or(MIN_META_WIDTH);
+    let meta_width = longest_visible_meta.clamp(MIN_META_WIDTH, MAX_META_WIDTH);
+    let fixed = RANK_WIDTH + meta_width + 1 + NAME_VALUE_GAP + VALUE_WIDTH + 1;
     let flexible = width.checked_sub(fixed)?;
     if flexible < MIN_NAME_WIDTH + MIN_BAR_WIDTH {
         return None;
@@ -269,6 +255,7 @@ fn horizontal_layout(width: usize, rows: &[ChartRow], max_rows: usize) -> Option
     let name_width = longest_visible_name.clamp(MIN_NAME_WIDTH, max_name);
     let bar_width = (flexible - name_width).clamp(MIN_BAR_WIDTH, MAX_BAR_WIDTH);
     Some(HorizontalLayout {
+        meta_width,
         name_width,
         bar_width,
     })

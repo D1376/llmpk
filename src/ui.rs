@@ -615,6 +615,8 @@ mod tests {
 
         assert!(text.contains("AA chart"));
         assert!(text.contains("Top 2 visible"));
+        assert!(text.contains("Anthropic"));
+        assert!(text.contains("OpenAI"));
         assert!(text.contains("Claude Sonnet"));
         assert!(text.contains("50.0"));
         assert!(text.contains("view: chart"));
@@ -640,6 +642,7 @@ mod tests {
 
         assert!(text.contains("AA Agents chart"));
         assert!(text.contains("Top 2 visible"));
+        assert!(text.contains("Anthropic"));
         assert!(text.contains("view: chart"));
         assert!(text.contains("Claude Code"));
         assert!(text.contains("60.0"));
