@@ -31,7 +31,7 @@ No API keys. No headless browser. No JavaScript runtime. Just HTTP and regex.
 - **Table and full-width horizontal chart views** — toggle with `m`
 - **Provider-aware colors** — AA provider colors and agent creator/provider accents carry into tables and charts
 - **Per-board filtering** — type `/` to filter; filters are cached and scoped to the active board
-- **Responsive layout** — adapts columns to terminal width; AA gets a selected-row detail pane on wide terminals
+- **Responsive layout** — adapts columns to terminal width; wide table views get selected-row detail panes
 - **Metric sorting** — missing values stay last; cost-like metrics default to ascending when selected
 - **Mouse support** — scroll with mouse wheel, click tabs to switch boards
 - **Row position indicator** — table view footer shows selected row / visible row count

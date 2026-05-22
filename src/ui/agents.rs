@@ -1,15 +1,16 @@
 use ratatui::{
     layout::{Constraint, Rect},
     style::{Color, Style, Stylize},
-    widgets::{Block, Borders, Cell, Row, Table},
+    text::Line,
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap},
     Frame,
 };
 
 use super::chart::{chart_capacity, render_metric_chart, ChartPreference, ChartRow};
 use super::{
-    accent_color_for_provider, agent_metric, color_for_seed, fmt_f, fmt_price, header_cell,
-    highlight_matches, price_color, push_unique, score_color, selected_row_style, AgentKey,
-    AppState,
+    accent_color_for_provider, agent_metric, color_for_seed, detail_line, fmt_f, fmt_price,
+    header_cell, highlight_matches, price_color, push_unique, score_color, selected_row_style,
+    truncate, AgentKey, AppState,
 };
 use crate::board::Board;
 use crate::coding_agents;
@@ -246,6 +247,67 @@ pub(super) fn render_agents_chart(
     );
     let preference = agent_chart_preference(key);
     render_metric_chart(frame, area, &title, &empty, &chart_rows, preference);
+}
+
+pub(super) fn render_agent_detail(
+    frame: &mut Frame,
+    area: Rect,
+    row: Option<&coding_agents::AgentRow>,
+) {
+    let max = area.width.saturating_sub(4) as usize;
+    let lines = match row {
+        Some(row) => vec![
+            Line::styled(truncate(row.agent(), max.max(8)), agent_name_style(row)),
+            detail_line("ID", &row.id, Style::default().fg(Color::DarkGray)),
+            Line::from(""),
+            detail_line("Model", row.model(), Style::default()),
+            detail_line(
+                "Provider",
+                row.provider(),
+                Style::default().fg(agent_provider_color(row).unwrap_or(Color::Magenta)),
+            ),
+            detail_line(
+                "Index",
+                fmt_pct(row.index_score, 1),
+                score_color_pct(row.index_score),
+            ),
+            detail_line(
+                "Pass@1",
+                fmt_pct(row.mean.reward, 1),
+                score_color_pct(row.mean.reward),
+            ),
+            detail_line(
+                "Cost",
+                fmt_price(row.mean.cost_usd, 2, "/task"),
+                price_color(row.mean.cost_usd, 1.0, 5.0),
+            ),
+            detail_line(
+                "Time",
+                fmt_duration(row.mean.agent_wall_time_sec),
+                Style::default().fg(Color::Blue),
+            ),
+            detail_line(
+                "Tokens",
+                fmt_compact_f(row.mean.total_tokens),
+                Style::default(),
+            ),
+            detail_line("Turns", fmt_f(row.mean.steps, 1), Style::default()),
+            detail_line(
+                "Release",
+                row.release_date.clone().unwrap_or_else(|| "-".into()),
+                Style::default().fg(Color::Gray),
+            ),
+        ],
+        None => vec![Line::styled(
+            "No row selected",
+            Style::default().fg(Color::DarkGray),
+        )],
+    };
+
+    let p = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Selected"))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(p, area);
 }
 
 fn agent_chart_preference(key: AgentKey) -> ChartPreference {

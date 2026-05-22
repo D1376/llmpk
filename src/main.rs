@@ -122,9 +122,8 @@ fn handle_key(
     }
     if app.is_help_open() {
         match k.code {
-            KeyCode::Char('?') | KeyCode::Char('h') | KeyCode::Esc | KeyCode::Char('q') => {
-                app.close_help()
-            }
+            KeyCode::Char('q') => return true,
+            KeyCode::Char('?') | KeyCode::Char('h') | KeyCode::Esc => app.close_help(),
             _ => {}
         }
         return false;

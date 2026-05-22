@@ -98,11 +98,16 @@ fn render_body(frame: &mut Frame, area: Rect, app: &mut AppState) {
                 chrome::render_filter_empty(frame, area, &query);
                 return;
             }
+            let selected = table_state
+                .get(&board)
+                .and_then(TableState::selected)
+                .unwrap_or(0);
             match view {
                 View::Table => {
+                    let (table_area, detail_area) = split_agents_body(area);
                     agents::render_agents_table(
                         frame,
-                        area,
+                        table_area,
                         rows,
                         &indices,
                         table_state,
@@ -111,6 +116,10 @@ fn render_body(frame: &mut Frame, area: Rect, app: &mut AppState) {
                         &filter_tokens,
                         app.compact,
                     );
+                    if let Some(detail_area) = detail_area {
+                        let row = indices.get(selected).and_then(|&i| rows.get(i));
+                        agents::render_agent_detail(frame, detail_area, row);
+                    }
                 }
                 View::Chart => agents::render_agents_chart(frame, area, rows, &indices, app),
             }
@@ -132,6 +141,18 @@ fn split_body(area: Rect) -> (Rect, Option<Rect>) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(72), Constraint::Length(34)])
+        .split(area);
+    (chunks[0], Some(chunks[1]))
+}
+
+fn split_agents_body(area: Rect) -> (Rect, Option<Rect>) {
+    if area.width < 132 || area.height < 12 {
+        return (area, None);
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(88), Constraint::Length(38)])
         .split(area);
     (chunks[0], Some(chunks[1]))
 }
@@ -649,7 +670,7 @@ mod tests {
     }
 
     #[test]
-    fn render_draws_agents_table_without_radar_panel() {
+    fn render_draws_agents_table_with_detail_panel() {
         let mut app = AppState::new();
         app.select_board(1);
         app.set_status(
@@ -672,8 +693,11 @@ mod tests {
         assert!(text.contains("AA Agents ("));
         assert!(!text.contains("Radar"));
         assert!(!text.contains("Legend"));
+        assert!(text.contains("Selected"));
         assert!(text.contains("Claude Code"));
         assert!(text.contains("Codex"));
+        assert!(text.contains("Pass@1"));
+        assert!(text.contains("$1.25/task"));
     }
 
     fn rendered_text(backend: &ratatui::backend::TestBackend) -> String {
