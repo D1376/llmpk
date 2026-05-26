@@ -335,7 +335,6 @@ mod tests {
     }
 
     const AA_URL: &str = "https://artificialanalysis.ai/";
-    const ARENA_URL: &str = "https://arena.ai/leaderboard/text";
 
     /// Benchmark: fresh client per request (old) vs shared client (new).
     /// Run with: LLMPK_BENCH=1 cargo test bench_fetch -- --nocapture
@@ -345,7 +344,7 @@ mod tests {
             return;
         }
 
-        let urls = [AA_URL, ARENA_URL];
+        let urls = [AA_URL];
         let rounds = 3;
 
         println!("\n=== Fetch Benchmark ({rounds} rounds per URL) ===\n");
