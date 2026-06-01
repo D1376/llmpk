@@ -1,6 +1,6 @@
 # llmpk
 
-A terminal TUI for browsing Artificial Analysis model and coding-agent leaderboards from one keyboard-driven interface.
+A terminal TUI for browsing LLM and coding-agent leaderboards from one keyboard-driven interface.
 
 > **Note:** This is a personal vibe coding project using [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Built for my own use to quickly compare LLM models and coding agents without opening a browser. Expect rough edges.
 
@@ -26,7 +26,7 @@ No API keys. No headless browser. No JavaScript runtime. Just HTTP and regex.
 
 ## Features
 
-- **2 leaderboard boards** — Artificial Analysis model rankings and Artificial Analysis coding-agent rankings
+- **3 leaderboard boards** — Artificial Analysis model rankings, Artificial Analysis coding-agent rankings, and DeepSWE coding-agent benchmark
 - **Parallel startup fetching** — both boards load in background threads on startup; `r` refetches the current board
 - **Table and full-width horizontal chart views** — toggle with `m`
 - **Provider-aware colors** — AA provider colors and agent creator/provider accents carry into tables and charts
@@ -63,7 +63,7 @@ Requires Rust 1.80+.
 |-----|--------|
 | `q`, `Esc`, `Ctrl-C` | Quit |
 | `[` / `]` | Previous / next board |
-| `1`, `2` | Jump to AA / AA Agents |
+| `1`, `2`, `3` | Jump to AA / AA Agents / DeepSWE |
 | `r` | Reload current board |
 | `y` | Copy selected row label to clipboard (OSC 52) |
 | `↑` / `↓` (or `k` / `j`) | Move selected row |
@@ -74,16 +74,16 @@ Requires Rust 1.80+.
 
 ### Sorting
 
-| Key | AA | AA Agents |
-|-----|----|-----------|
-| `i` | Intelligence | Index |
-| `a` | — | Pass@1 |
-| `s` | Speed | Turns |
-| `p` | Price | Cost |
-| `t` | — | Time |
-| `u` | — | Tokens |
-| `c` | Context | — |
-| `o` | Toggle sort direction | Toggle sort direction |
+| Key | AA | AA Agents | DeepSWE |
+|-----|----|-----------|---------|
+| `i` | Intelligence | Index | — |
+| `a` | — | Pass@1 | Pass@1 |
+| `s` | Speed | Turns | Steps |
+| `p` | Price | Cost | Cost |
+| `t` | — | Time | Time |
+| `u` | — | Tokens | Tokens |
+| `c` | Context | — | — |
+| `o` | Toggle sort direction | Toggle sort direction | Toggle sort direction |
 
 ### View and filter
 
@@ -101,6 +101,7 @@ Requires Rust 1.80+.
 |-------|--------|---------|
 | AA | [artificialanalysis.ai](https://artificialanalysis.ai/) | Intelligence index, output speed (t/s), blended price ($/M tokens), context window |
 | AA Agents | [artificialanalysis.ai/agents/coding-agents](https://artificialanalysis.ai/agents/coding-agents) | Coding Agent Index, Pass@1, mean cost, mean execution time, mean tokens, mean turns |
+| DeepSWE | [deepswe.datacurve.ai](https://deepswe.datacurve.ai/) | Pass@1, mean cost ($), mean duration (s), mean total tokens, mean agent steps |
 
 ## How it works
 
@@ -113,7 +114,8 @@ llmpk:
 3. Decodes JS string escapes and concatenates into a single stream
 4. Parses AA model objects by scanning for balanced JSON objects containing `intelligence_index`
 5. Parses AA Agents rows by scanning for the first balanced `rows` array
-6. Preserves provider metadata where available so table and chart colors stay tied to the underlying model or agent creator
+6. Fetches DeepSWE data directly from a JSON API endpoint
+7. Preserves provider metadata where available so table and chart colors stay tied to the underlying model or agent creator
 
 This is inherently fragile. If the site changes its markup, the scraper breaks. That's a feature, not a bug — it surfaces real breakage instead of hiding it behind retries.
 
@@ -139,6 +141,7 @@ Fixture and live tests are gated behind environment variables:
 # Fixture-based tests
 LLMPK_HOMEPAGE_FIXTURE=path/to/aa.html cargo test
 LLMPK_CODING_AGENTS_FIXTURE=path/to/coding-agents.html cargo test
+LLMPK_DEEPSWE_FIXTURE=path/to/leaderboard-live.json cargo test
 
 # Live network tests
 LLMPK_LIVE=1 cargo test live_fetch
@@ -156,10 +159,12 @@ src/
   rsc.rs            HTTP client, RSC stream extraction, brace/bracket scanners
   aa.rs             artificialanalysis.ai parser
   coding_agents.rs  artificialanalysis.ai coding agents parser
+  deepswe.rs        deepswe.datacurve.ai parser (JSON API, best-per-model dedup)
   board.rs          Board enum, Data/Status wrappers, fetch dispatch
   ui.rs             AppState, sort/filter state, render dispatch, shared helpers
   ui/aa_board.rs    AA table/detail/chart rendering
   ui/agents.rs      Agents table/chart rendering, brand colors
+  ui/deepswe_board.rs  DeepSWE table/detail/chart rendering, model colors
   ui/chart.rs       Shared horizontal chart infrastructure
   ui/filter.rs      Per-board filter matching and filter cache helpers
   ui/sort.rs        Sort keys, sort direction, and missing-value ordering
