@@ -161,13 +161,11 @@ fn deepswe_cell(
             let pct = row.pass_rate.map(|v| v * 100.0);
             Cell::from(fmt_pct(row.pass_rate)).style(score_color(pct, 20.0, 50.0))
         }
-        DeepSweColumn::Cost => {
-            Cell::from(fmt_price(row.mean_cost_usd, 2, "")).style(price_color(
-                row.mean_cost_usd,
-                3.0,
-                10.0,
-            ))
-        }
+        DeepSweColumn::Cost => Cell::from(fmt_price(row.mean_cost_usd, 2, "")).style(price_color(
+            row.mean_cost_usd,
+            3.0,
+            10.0,
+        )),
         DeepSweColumn::Time => Cell::from(fmt_duration(row.mean_duration_seconds))
             .style(Style::default().fg(Color::Blue)),
         DeepSweColumn::Tokens => Cell::from(fmt_compact_f(row.total_tokens())),
@@ -224,11 +222,7 @@ pub(super) fn render_deepswe_chart(
     render_metric_chart(frame, area, &title, &empty, &chart_rows, preference);
 }
 
-pub(super) fn render_deepswe_detail(
-    frame: &mut Frame,
-    area: Rect,
-    row: Option<&deepswe::Row>,
-) {
+pub(super) fn render_deepswe_detail(frame: &mut Frame, area: Rect, row: Option<&deepswe::Row>) {
     let max = area.width.saturating_sub(4) as usize;
     let lines = match row {
         Some(row) => vec![
