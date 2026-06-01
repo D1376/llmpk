@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 
 use crate::aa;
 use crate::coding_agents;
+use crate::deepswe;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortDir {
@@ -42,6 +43,15 @@ pub enum AgentKey {
     Turns,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeepSweKey {
+    Pass,
+    Cost,
+    Time,
+    Tokens,
+    Steps,
+}
+
 #[derive(Debug, Clone)]
 pub struct AaSort {
     pub key: AaKey,
@@ -54,12 +64,24 @@ pub struct AgentSort {
     pub dir: SortDir,
 }
 
+#[derive(Debug, Clone)]
+pub struct DeepSweSort {
+    pub key: DeepSweKey,
+    pub dir: SortDir,
+}
+
 // ── Sort functions ───────────────────────────────────────────────────
 
-pub fn sort_with(data: &mut crate::board::Data, aa_sort: &AaSort, agent_sort: &AgentSort) {
+pub fn sort_with(
+    data: &mut crate::board::Data,
+    aa_sort: &AaSort,
+    agent_sort: &AgentSort,
+    deepswe_sort: &DeepSweSort,
+) {
     match data {
         crate::board::Data::Aa(models) => sort_aa(models, aa_sort),
         crate::board::Data::AaAgents(rows) => sort_agents(rows, agent_sort),
+        crate::board::Data::DeepSwe(rows) => sort_deepswe(rows, deepswe_sort),
     }
 }
 
@@ -100,6 +122,26 @@ pub fn agent_metric(row: &coding_agents::AgentRow, key: AgentKey) -> Option<f64>
         AgentKey::Time => row.mean.agent_wall_time_sec,
         AgentKey::Tokens => row.mean.total_tokens,
         AgentKey::Turns => row.mean.steps,
+    }
+}
+
+fn sort_deepswe(rows: &mut [deepswe::Row], sort: &DeepSweSort) {
+    let key = sort.key;
+    let dir = sort.dir;
+    rows.sort_by(|a, b| {
+        let av = deepswe_metric(a, key);
+        let bv = deepswe_metric(b, key);
+        cmp_opt_for_dir(av, bv, dir)
+    });
+}
+
+pub fn deepswe_metric(row: &deepswe::Row, key: DeepSweKey) -> Option<f64> {
+    match key {
+        DeepSweKey::Pass => row.pass_rate,
+        DeepSweKey::Cost => row.mean_cost_usd,
+        DeepSweKey::Time => row.mean_duration_seconds,
+        DeepSweKey::Tokens => row.total_tokens(),
+        DeepSweKey::Steps => row.mean_agent_steps,
     }
 }
 

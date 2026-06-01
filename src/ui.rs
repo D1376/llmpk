@@ -10,6 +10,7 @@ mod aa_board;
 mod agents;
 mod chart;
 mod chrome;
+mod deepswe_board;
 mod filter;
 mod sort;
 pub mod state;
@@ -57,6 +58,7 @@ fn render_body(frame: &mut Frame, area: Rect, app: &mut AppState) {
     let view = app.current_view();
     let aa_sort_key = app.aa_sort.key;
     let agent_sort_key = app.agent_sort.key;
+    let deepswe_sort_key = app.deepswe_sort.key;
     let indices = app.filter_cache(board, &query).to_vec();
     let filter_tokens = filter_tokens(&query);
     let table_state = &mut app.table_state;
@@ -124,6 +126,39 @@ fn render_body(frame: &mut Frame, area: Rect, app: &mut AppState) {
                 View::Chart => agents::render_agents_chart(frame, area, rows, &indices, app),
             }
         }
+        Some(Status::Loaded(Data::DeepSwe(rows))) => {
+            if indices.is_empty() && filter_is_active(&query) {
+                chrome::render_filter_empty(frame, area, &query);
+                return;
+            }
+            let selected = table_state
+                .get(&board)
+                .and_then(TableState::selected)
+                .unwrap_or(0);
+            match view {
+                View::Table => {
+                    let (table_area, detail_area) = split_deepswe_body(area);
+                    deepswe_board::render_deepswe_table(
+                        frame,
+                        table_area,
+                        rows,
+                        &indices,
+                        table_state,
+                        board,
+                        deepswe_sort_key,
+                        &filter_tokens,
+                        app.compact,
+                    );
+                    if let Some(detail_area) = detail_area {
+                        let row = indices.get(selected).and_then(|&i| rows.get(i));
+                        deepswe_board::render_deepswe_detail(frame, detail_area, row);
+                    }
+                }
+                View::Chart => {
+                    deepswe_board::render_deepswe_chart(frame, area, rows, &indices, app)
+                }
+            }
+        }
         Some(Status::Error(e)) => {
             chrome::render_error(frame, area, e);
         }
@@ -153,6 +188,18 @@ fn split_agents_body(area: Rect) -> (Rect, Option<Rect>) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(88), Constraint::Length(38)])
+        .split(area);
+    (chunks[0], Some(chunks[1]))
+}
+
+fn split_deepswe_body(area: Rect) -> (Rect, Option<Rect>) {
+    if area.width < 110 || area.height < 12 {
+        return (area, None);
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(72), Constraint::Length(34)])
         .split(area);
     (chunks[0], Some(chunks[1]))
 }

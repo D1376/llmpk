@@ -7,14 +7,14 @@ use ratatui::{
 };
 
 use super::{
-    aa_board, agents, filter_is_active, format_filter_label, truncate, AppState, View,
-    SPINNER_FRAMES, VERSION,
+    aa_board, agents, deepswe_board, filter_is_active, format_filter_label, truncate, AppState,
+    View, SPINNER_FRAMES, VERSION,
 };
 use crate::board::{Board, Data, Status};
 
 pub(super) fn render_help_overlay(frame: &mut Frame, area: Rect) {
     let w = 82.min(area.width.saturating_sub(2));
-    let popup = centered_rect(area, w, 36);
+    let popup = centered_rect(area, w, 42);
     frame.render_widget(ratatui::widgets::Clear, popup);
 
     let dim = Style::default().fg(Color::DarkGray);
@@ -28,12 +28,13 @@ pub(super) fn render_help_overlay(frame: &mut Frame, area: Rect) {
             "AA Agents",
             "artificialanalysis.ai coding-agent benchmark index",
         ),
+        help_row("DeepSWE", "datacurve.ai DeepSWE coding-agent benchmark"),
         Line::from(""),
         Line::styled("Navigation", head),
         help_row("q  Esc  Ctrl-C", "Quit llmpk"),
         help_row("?  h", "Toggle this help overlay"),
         help_row("[   ]", "Previous / next board (cycles)"),
-        help_row("1  2", "Jump directly to board 1-2"),
+        help_row("1  2  3", "Jump directly to board 1-3"),
         help_row("r", "Reload the current board (refetch from source)"),
         help_row("y", "Copy selected model name to clipboard (OSC 52)"),
         help_row("↑  ↓  k  j", "Move the highlighted row"),
@@ -57,6 +58,12 @@ pub(super) fn render_help_overlay(frame: &mut Frame, area: Rect) {
         help_row("t", "Time — mean wall-clock task runtime"),
         help_row("u", "Tokens — mean total token usage per task"),
         help_row("s", "Turns — mean agent turns per task"),
+        Line::styled("  DeepSWE sort keys", dim),
+        help_row("a", "Pass@1 — attempt pass rate"),
+        help_row("p", "Cost — mean USD per task"),
+        help_row("t", "Time — mean duration in seconds"),
+        help_row("u", "Tokens — mean total tokens"),
+        help_row("s", "Steps — mean agent steps"),
         Line::from(""),
         Line::styled("Filter", head),
         help_row(
@@ -161,6 +168,7 @@ fn tab_label(board: Board) -> &'static str {
     match board {
         Board::Aa => "AA",
         Board::AaAgents => "AAg",
+        Board::DeepSwe => "DSwe",
     }
 }
 
@@ -195,6 +203,15 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
             };
             Span::styled(label, Style::default().fg(Color::Green))
         }
+        Some(Status::Loaded(Data::DeepSwe(v))) => {
+            let visible = app.row_count(board);
+            let label = if filter_is_active(query) {
+                format!("{visible}/{} models", v.len())
+            } else {
+                format!("{} models", v.len())
+            };
+            Span::styled(label, Style::default().fg(Color::Green))
+        }
         Some(Status::Loading) | None => Span::styled(
             format!("{} loading...", spinner_frame()),
             Style::default().fg(Color::Yellow),
@@ -216,10 +233,16 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
             agents::agent_key_label(app.agent_sort.key),
             app.agent_sort.dir.arrow()
         ),
+        Board::DeepSwe => format!(
+            "sort: {} {}",
+            deepswe_board::deepswe_key_label(app.deepswe_sort.key),
+            app.deepswe_sort.dir.arrow()
+        ),
     };
     let source = match board {
         Board::Aa => "artificialanalysis.ai",
         Board::AaAgents => "artificialanalysis.ai/agents/coding-agents",
+        Board::DeepSwe => "deepswe.datacurve.ai",
     };
 
     // Build segments in priority order (highest priority = last to drop).
@@ -429,6 +452,7 @@ pub(super) fn render_footer(frame: &mut Frame, area: Rect, app: &AppState) {
     let unfiltered = match app.status.get(&board) {
         Some(Status::Loaded(Data::Aa(v))) => v.len(),
         Some(Status::Loaded(Data::AaAgents(v))) => v.len(),
+        Some(Status::Loaded(Data::DeepSwe(v))) => v.len(),
         _ => 0,
     };
     let filter_info = if filter_is_active(app.current_filter()) && total != unfiltered {
@@ -464,6 +488,7 @@ pub(super) fn render_footer(frame: &mut Frame, area: Rect, app: &AppState) {
     let sort_keys = match app.current_board() {
         Board::Aa => "i/s/p/c",
         Board::AaAgents => "i/a/p/t/u/s",
+        Board::DeepSwe => "a/p/t/u/s",
     };
     let view_action = match app.current_view() {
         View::Table => " chart  ",

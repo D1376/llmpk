@@ -1,5 +1,6 @@
 use crate::aa;
 use crate::coding_agents;
+use crate::deepswe;
 
 pub struct FilterCache {
     pub(super) indices: Vec<usize>,
@@ -64,6 +65,26 @@ pub(super) fn count_matching_agents(rows: &[coding_agents::AgentRow], query: &st
     }
     rows.iter()
         .filter(|row| agent_matches_filter(row, &tokens))
+        .count()
+}
+
+pub fn deepswe_matches_filter(row: &deepswe::Row, tokens: &[String]) -> bool {
+    let display = row.display_model();
+    let fields = [
+        row.model.as_str(),
+        display.as_str(),
+        row.reasoning_effort.as_deref().unwrap_or(""),
+    ];
+    tokens.iter().all(|token| token_in_fields(token, &fields))
+}
+
+pub(super) fn count_matching_deepswe(rows: &[deepswe::Row], query: &str) -> usize {
+    let tokens = filter_tokens(query);
+    if tokens.is_empty() {
+        return rows.len();
+    }
+    rows.iter()
+        .filter(|row| deepswe_matches_filter(row, &tokens))
         .count()
 }
 

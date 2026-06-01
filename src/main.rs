@@ -1,6 +1,7 @@
 mod aa;
 mod board;
 mod coding_agents;
+mod deepswe;
 mod rsc;
 mod ui;
 

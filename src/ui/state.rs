@@ -25,6 +25,7 @@ pub struct AppState {
     pub compact: bool,
     pub aa_sort: AaSort,
     pub agent_sort: AgentSort,
+    pub deepswe_sort: DeepSweSort,
     filter_caches: HashMap<Board, FilterCache>,
 }
 
@@ -47,6 +48,10 @@ impl AppState {
             },
             agent_sort: AgentSort {
                 key: AgentKey::Index,
+                dir: SortDir::Desc,
+            },
+            deepswe_sort: DeepSweSort {
+                key: DeepSweKey::Pass,
                 dir: SortDir::Desc,
             },
             filter_caches: HashMap::new(),
@@ -177,6 +182,7 @@ impl AppState {
         match self.status.get(&board) {
             Some(Status::Loaded(Data::Aa(v))) => count_matching_aa(v, query),
             Some(Status::Loaded(Data::AaAgents(v))) => count_matching_agents(v, query),
+            Some(Status::Loaded(Data::DeepSwe(v))) => count_matching_deepswe(v, query),
             _ => 0,
         }
     }
@@ -320,6 +326,31 @@ impl AppState {
                     }
                 }
             }
+            Board::DeepSwe => {
+                let new_key = match key {
+                    'a' => Some(DeepSweKey::Pass),
+                    'p' => Some(DeepSweKey::Cost),
+                    't' => Some(DeepSweKey::Time),
+                    'u' => Some(DeepSweKey::Tokens),
+                    's' => Some(DeepSweKey::Steps),
+                    _ => None,
+                };
+                if let Some(k) = new_key {
+                    if self.deepswe_sort.key == k {
+                        self.deepswe_sort.dir = self.deepswe_sort.dir.toggle();
+                    } else {
+                        self.deepswe_sort.key = k;
+                        self.deepswe_sort.dir = if matches!(
+                            k,
+                            DeepSweKey::Cost | DeepSweKey::Time | DeepSweKey::Tokens
+                        ) {
+                            SortDir::Asc
+                        } else {
+                            SortDir::Desc
+                        };
+                    }
+                }
+            }
         }
         self.resort_current();
     }
@@ -340,6 +371,11 @@ impl AppState {
                 .filter(|r| agent_matches_filter(r, &tokens))
                 .nth(idx)
                 .map(|r| r.label()),
+            Some(Status::Loaded(Data::DeepSwe(rows))) => rows
+                .iter()
+                .filter(|r| deepswe_matches_filter(r, &tokens))
+                .nth(idx)
+                .map(|r| r.display_model()),
             _ => None,
         }
     }
@@ -348,6 +384,7 @@ impl AppState {
         match self.current_board() {
             Board::Aa => self.aa_sort.dir = self.aa_sort.dir.toggle(),
             Board::AaAgents => self.agent_sort.dir = self.agent_sort.dir.toggle(),
+            Board::DeepSwe => self.deepswe_sort.dir = self.deepswe_sort.dir.toggle(),
         }
         self.resort_current();
     }
@@ -355,7 +392,7 @@ impl AppState {
     fn resort_current(&mut self) {
         let board = self.current_board();
         if let Some(Status::Loaded(data)) = self.status.get_mut(&board) {
-            sort_with(data, &self.aa_sort, &self.agent_sort);
+            sort_with(data, &self.aa_sort, &self.agent_sort, &self.deepswe_sort);
         }
         let has_rows = self.row_count(board) > 0;
         if let Some(st) = self.table_state.get_mut(&board) {
@@ -364,7 +401,7 @@ impl AppState {
     }
 
     fn sort_data(&self, data: &mut Data) {
-        sort_with(data, &self.aa_sort, &self.agent_sort);
+        sort_with(data, &self.aa_sort, &self.agent_sort, &self.deepswe_sort);
     }
 
     /// Return cached filter indices for the given board. Rebuilds if query changed.
@@ -397,6 +434,18 @@ impl AppState {
                         rows.iter()
                             .enumerate()
                             .filter(|(_, r)| agent_matches_filter(r, &tokens))
+                            .map(|(i, _)| i)
+                            .collect()
+                    }
+                }
+                Some(Status::Loaded(Data::DeepSwe(rows))) => {
+                    let tokens = filter_tokens(query);
+                    if tokens.is_empty() {
+                        (0..rows.len()).collect()
+                    } else {
+                        rows.iter()
+                            .enumerate()
+                            .filter(|(_, r)| deepswe_matches_filter(r, &tokens))
                             .map(|(i, _)| i)
                             .collect()
                     }
