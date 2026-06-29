@@ -109,7 +109,7 @@ fn first_nonempty<const N: usize>(values: [Option<&str>; N]) -> Option<&str> {
 }
 
 pub fn fetch() -> Result<Vec<AgentRow>> {
-    let html = rsc::fetch_html(CODING_AGENTS_URL)?;
+    let html = rsc::fetch_text_retry(CODING_AGENTS_URL)?;
     parse(&html)
 }
 

@@ -164,6 +164,7 @@ fn handle_key(
         KeyCode::Char('y') => {
             if let Some(name) = app.selected_name() {
                 copy_to_clipboard(&name);
+                app.copy_feedback_at = Some(Instant::now());
             }
         }
         KeyCode::Char('/') => app.begin_filter(),
@@ -242,7 +243,11 @@ fn ensure_loaded(
 
 fn spawn_fetch(board: Board, tx: mpsc::Sender<Msg>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let result = board::fetch(board);
+        let result =
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| board::fetch(board))) {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!("fetch thread panicked")),
+            };
         let _ = tx.send((board, result));
     })
 }

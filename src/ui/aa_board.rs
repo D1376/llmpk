@@ -201,7 +201,11 @@ pub(super) fn render_aa_detail(frame: &mut Frame, area: Rect, model: Option<&aa:
                 truncate(&model.name, max.max(8)),
                 Style::default().fg(Color::Cyan).bold(),
             ),
-            detail_line("ID", &model.id, Style::default().fg(Color::DarkGray)),
+            detail_line(
+                "ID",
+                model.display_id(),
+                Style::default().fg(Color::DarkGray),
+            ),
             Line::from(""),
             detail_line(
                 "Provider",
@@ -281,7 +285,7 @@ pub(super) fn render_aa_chart(
                 value,
                 value_label: aa_chart_text_value(m, key),
                 color: aa_model_color(m),
-                color_seed: m.id.clone(),
+                color_seed: m.display_id().to_string(),
             })
         })
         .take(max_bars)

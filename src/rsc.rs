@@ -17,7 +17,7 @@ static CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .expect("building reqwest client")
 });
 
-pub fn fetch_html(url: &str) -> Result<String> {
+pub fn fetch_text(url: &str) -> Result<String> {
     CLIENT
         .get(url)
         .send()
@@ -26,6 +26,37 @@ pub fn fetch_html(url: &str) -> Result<String> {
         .with_context(|| format!("non-2xx from {url}"))?
         .text()
         .context("reading response body")
+}
+
+/// Fetch with retry for transient failures (timeout, connection reset, 5xx).
+/// Retries up to 2 times with 1s/2s backoff.
+pub fn fetch_text_retry(url: &str) -> Result<String> {
+    let delays = [Duration::from_secs(1), Duration::from_secs(2)];
+    let mut last_err = None;
+    for attempt in 0..=delays.len() {
+        match fetch_text(url) {
+            Ok(body) => return Ok(body),
+            Err(e) => {
+                if attempt < delays.len() && is_transient(&e) {
+                    std::thread::sleep(delays[attempt]);
+                    last_err = Some(e);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow!("fetch failed after retries")))
+}
+
+fn is_transient(err: &anyhow::Error) -> bool {
+    let msg = format!("{err:#}");
+    msg.contains("timed out")
+        || msg.contains("connection closed")
+        || msg.contains("connection reset")
+        || msg.contains("502")
+        || msg.contains("503")
+        || msg.contains("504")
 }
 
 static RSC_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -127,26 +158,28 @@ pub fn innermost_objects_with<'a>(stream: &'a str, needle: &str) -> Vec<&'a str>
         }
     }
 
+    // Filter to only those containing the needle, sorted smallest first.
     let mut matches: Vec<(usize, usize)> = closed
         .into_iter()
         .filter(|(s, e)| stream[*s..=*e].contains(needle))
         .collect();
-    matches.sort_by_key(|(s, e)| e - s);
+    matches.sort_unstable_by_key(|(s, e)| e - s);
 
+    // Keep only innermost: skip entries that contain a smaller already-chosen match.
     let mut chosen: Vec<(usize, usize)> = Vec::new();
     for (s, e) in matches {
-        if chosen.iter().any(|(cs, ce)| *cs >= s && *ce <= e) {
+        if chosen.iter().any(|&(cs, ce)| cs >= s && ce <= e) {
             continue;
         }
         chosen.push((s, e));
     }
-    chosen.sort_by_key(|(s, _)| *s);
+    chosen.sort_unstable_by_key(|(s, _)| *s);
     chosen.iter().map(|(s, e)| &stream[*s..=*e]).collect()
 }
 
 /// Fetch HTML using a fresh client per call (old behavior).
 #[cfg(test)]
-pub fn fetch_html_new_client(url: &str) -> Result<String> {
+pub fn fetch_text_new_client(url: &str) -> Result<String> {
     Client::builder()
         .user_agent(UA)
         .timeout(Duration::from_secs(20))
@@ -351,13 +384,13 @@ mod tests {
 
         for url in &urls {
             // Warm up the shared client
-            let _ = fetch_html(url);
+            let _ = fetch_text(url);
 
             // --- Shared client (new) ---
             let mut shared_times = Vec::new();
             for _ in 0..rounds {
                 let t = std::time::Instant::now();
-                let _ = fetch_html(url);
+                let _ = fetch_text(url);
                 shared_times.push(t.elapsed());
             }
 
@@ -365,7 +398,7 @@ mod tests {
             let mut fresh_times = Vec::new();
             for _ in 0..rounds {
                 let t = std::time::Instant::now();
-                let _ = fetch_html_new_client(url);
+                let _ = fetch_text_new_client(url);
                 fresh_times.push(t.elapsed());
             }
 
@@ -446,5 +479,32 @@ mod tests {
             "  Compile overhead   : {:.2}x vs static",
             recompile_avg.as_secs_f64() / static_avg.as_secs_f64()
         );
+    }
+
+    #[test]
+    fn is_transient_detects_timeouts_and_5xx() {
+        assert!(is_transient(&anyhow!("requesting https://x: timed out")));
+        assert!(is_transient(&anyhow!("connection closed")));
+        assert!(is_transient(&anyhow!("connection reset")));
+        assert!(is_transient(&anyhow!(
+            "non-2xx from https://x: 502 Bad Gateway"
+        )));
+        assert!(is_transient(&anyhow!(
+            "non-2xx from https://x: 503 Service Unavailable"
+        )));
+        assert!(is_transient(&anyhow!(
+            "non-2xx from https://x: 504 Gateway Timeout"
+        )));
+    }
+
+    #[test]
+    fn is_transient_ignores_permanent_errors() {
+        assert!(!is_transient(&anyhow!(
+            "non-2xx from https://x: 404 Not Found"
+        )));
+        assert!(!is_transient(&anyhow!(
+            "non-2xx from https://x: 403 Forbidden"
+        )));
+        assert!(!is_transient(&anyhow!("dns error")));
     }
 }

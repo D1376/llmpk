@@ -1,0 +1,64 @@
+{
+  "rows": [
+    {
+      "model": "claude-fable-5",
+      "reasoning_effort": "xhigh",
+      "pass_rate": 0.699,
+      "mean_cost_usd": 13.41,
+      "mean_duration_seconds": 1411.58,
+      "mean_agent_steps": 68.4,
+      "mean_input_tokens": 7329160.0,
+      "mean_output_tokens": 80352.0,
+      "n_passed": 316,
+      "n_attempted": 452
+    },
+    {
+      "model": "claude-fable-5",
+      "reasoning_effort": "high",
+      "pass_rate": 0.686,
+      "mean_cost_usd": 9.18,
+      "mean_duration_seconds": 1062.3,
+      "mean_agent_steps": 58.7,
+      "mean_input_tokens": 4833178.0,
+      "mean_output_tokens": 57287.0,
+      "n_passed": 295,
+      "n_attempted": 430
+    },
+    {
+      "model": "gpt-5-5",
+      "reasoning_effort": "xhigh",
+      "pass_rate": 0.670,
+      "mean_cost_usd": 7.23,
+      "mean_duration_seconds": 1806.3,
+      "mean_agent_steps": 82.0,
+      "mean_input_tokens": 8372927.0,
+      "mean_output_tokens": 46294.0,
+      "n_passed": 303,
+      "n_attempted": 452
+    },
+    {
+      "model": "gpt-5-5",
+      "reasoning_effort": "high",
+      "pass_rate": 0.644,
+      "mean_cost_usd": 5.10,
+      "mean_duration_seconds": 1450.0,
+      "mean_agent_steps": 70.0,
+      "mean_input_tokens": 5000000.0,
+      "mean_output_tokens": 35000.0,
+      "n_passed": 291,
+      "n_attempted": 452
+    },
+    {
+      "model": "gemini-3-5-flash",
+      "reasoning_effort": "high",
+      "pass_rate": 0.550,
+      "mean_cost_usd": 0.50,
+      "mean_duration_seconds": 800.0,
+      "mean_agent_steps": 45.0,
+      "mean_input_tokens": 2000000.0,
+      "mean_output_tokens": 30000.0,
+      "n_passed": 249,
+      "n_attempted": 452
+    }
+  ]
+}

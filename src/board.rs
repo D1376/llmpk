@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use anyhow::Result;
 
 use crate::aa;
@@ -20,11 +18,11 @@ impl Board {
         &ALL_BOARDS
     }
 
-    pub fn label(self) -> Cow<'static, str> {
+    pub fn label(self) -> &'static str {
         match self {
-            Board::Aa => Cow::Borrowed("AA"),
-            Board::AaAgents => Cow::Borrowed("AA Agents"),
-            Board::DeepSwe => Cow::Borrowed("DeepSWE"),
+            Board::Aa => "AA",
+            Board::AaAgents => "AA Agents",
+            Board::DeepSwe => "DeepSWE",
         }
     }
 

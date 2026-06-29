@@ -203,7 +203,9 @@ pub(super) fn chart_bar_len(
         ChartPreference::Higher => (value - min) / (max - min),
         ChartPreference::Lower => (max - value) / (max - min),
     };
-    ((normalized.clamp(0.0, 1.0) * width as f64).round() as usize).clamp(1, width)
+    let bars = (normalized.clamp(0.0, 1.0) * width as f64).round() as usize;
+    // Don't show a bar if the value rounds to 0 bars
+    bars.min(width)
 }
 
 pub(super) fn format_chart_number(value: f64) -> String {

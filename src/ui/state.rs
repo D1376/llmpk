@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use ratatui::widgets::TableState;
 
@@ -27,6 +28,7 @@ pub struct AppState {
     pub agent_sort: AgentSort,
     pub deepswe_sort: DeepSweSort,
     filter_caches: HashMap<Board, FilterCache>,
+    pub copy_feedback_at: Option<Instant>,
 }
 
 impl AppState {
@@ -55,6 +57,7 @@ impl AppState {
                 dir: SortDir::Desc,
             },
             filter_caches: HashMap::new(),
+            copy_feedback_at: None,
         }
     }
 
@@ -355,27 +358,18 @@ impl AppState {
         self.resort_current();
     }
 
-    pub fn selected_name(&self) -> Option<String> {
+    pub fn selected_name(&mut self) -> Option<String> {
         let board = self.current_board();
         let idx = self.selected_idx();
-        let query = self.filter_query(board);
-        let tokens = filter_tokens(query);
+        let query = self.filter_query(board).to_string();
+        let indices = self.filter_cache(board, &query);
+        let data_idx = *indices.get(idx)?;
         match self.status.get(&board) {
-            Some(Status::Loaded(Data::Aa(models))) => models
-                .iter()
-                .filter(|m| aa_matches_filter(m, &tokens))
-                .nth(idx)
-                .map(|m| m.name.clone()),
-            Some(Status::Loaded(Data::AaAgents(rows))) => rows
-                .iter()
-                .filter(|r| agent_matches_filter(r, &tokens))
-                .nth(idx)
-                .map(|r| r.label()),
-            Some(Status::Loaded(Data::DeepSwe(rows))) => rows
-                .iter()
-                .filter(|r| deepswe_matches_filter(r, &tokens))
-                .nth(idx)
-                .map(|r| r.display_model()),
+            Some(Status::Loaded(Data::Aa(models))) => models.get(data_idx).map(|m| m.name.clone()),
+            Some(Status::Loaded(Data::AaAgents(rows))) => rows.get(data_idx).map(|r| r.label()),
+            Some(Status::Loaded(Data::DeepSwe(rows))) => {
+                rows.get(data_idx).map(|r| r.display_model())
+            }
             _ => None,
         }
     }
@@ -394,6 +388,7 @@ impl AppState {
         if let Some(Status::Loaded(data)) = self.status.get_mut(&board) {
             sort_with(data, &self.aa_sort, &self.agent_sort, &self.deepswe_sort);
         }
+        self.filter_caches.remove(&board);
         let has_rows = self.row_count(board) > 0;
         if let Some(st) = self.table_state.get_mut(&board) {
             st.select(if has_rows { Some(0) } else { None });
@@ -648,5 +643,41 @@ mod tests {
         assert_eq!(indices, &[1]);
         let indices = app.filter_cache(Board::Aa, "anthropic");
         assert_eq!(indices, &[0]);
+    }
+
+    #[test]
+    fn sort_invalidates_filter_cache() {
+        let mut app = AppState::new();
+        let mut m1 = aa_model("claude", "Claude", "Anthropic");
+        m1.intelligence_index = Some(60.0);
+        m1.price_1m_blended_3_to_1 = Some(5.0);
+        let mut m2 = aa_model("gpt", "GPT", "OpenAI");
+        m2.intelligence_index = Some(50.0);
+        m2.price_1m_blended_3_to_1 = Some(1.0);
+        app.set_status(Board::Aa, Status::Loaded(Data::Aa(vec![m1, m2])));
+
+        // Initially sorted by intelligence desc: [claude(60), gpt(50)]
+        let indices = app.filter_cache(Board::Aa, "").to_vec();
+        assert_eq!(indices, &[0, 1]);
+
+        // Switch sort to price (ascending) — data re-sorted to [gpt($1), claude($5)]
+        app.cycle_sort('p');
+
+        // Cache should be invalidated; filter should see the new order
+        let indices = app.filter_cache(Board::Aa, "").to_vec();
+        if let Some(Status::Loaded(Data::Aa(models))) = app.status.get(&Board::Aa) {
+            assert_eq!(
+                models[indices[0]].name, "GPT",
+                "gpt should be first (cheaper)"
+            );
+            assert_eq!(models[indices[1]].name, "Claude", "claude should be second");
+        }
+
+        // Verify filter still works correctly after sort
+        let indices = app.filter_cache(Board::Aa, "claude").to_vec();
+        assert_eq!(indices.len(), 1);
+        if let Some(Status::Loaded(Data::Aa(models))) = app.status.get(&Board::Aa) {
+            assert_eq!(models[indices[0]].name, "Claude");
+        }
     }
 }

@@ -4,6 +4,7 @@ use crate::coding_agents;
 pub fn aa_model(id: &str, name: &str, provider: &str) -> aa::Model {
     aa::Model {
         id: id.to_string(),
+        slug: None,
         name: name.to_string(),
         model_creators: Some(aa::Creator {
             name: provider.to_string(),

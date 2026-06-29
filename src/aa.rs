@@ -11,20 +11,22 @@ const HOMEPAGE: &str = "https://artificialanalysis.ai/";
 pub struct Model {
     pub id: String,
     #[serde(default)]
-    pub name: String,
-    #[serde(default, alias = "modelCreators")]
-    pub model_creators: Option<Creator>,
+    pub slug: Option<String>,
     #[serde(default)]
+    pub name: String,
+    #[serde(default, alias = "modelCreators", alias = "creator")]
+    pub model_creators: Option<Creator>,
+    #[serde(default, alias = "intelligenceIndex")]
     pub intelligence_index: Option<f64>,
     #[serde(default, rename = "timescaleData")]
     pub timescale: Option<Timescale>,
-    #[serde(default)]
+    #[serde(default, alias = "price1mBlended3To1", alias = "price1mBlended0To3To1")]
     pub price_1m_blended_3_to_1: Option<f64>,
-    #[serde(default)]
+    #[serde(default, alias = "contextWindowTokens")]
     pub context_window_tokens: Option<u64>,
-    #[serde(default)]
+    #[serde(default, alias = "releaseDate")]
     pub release_date: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "isOpenWeights")]
     pub is_open_weights: Option<bool>,
 }
 
@@ -38,7 +40,7 @@ pub struct Creator {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Timescale {
-    #[serde(default)]
+    #[serde(default, alias = "medianOutputSpeed")]
     pub median_output_speed: Option<f64>,
 }
 
@@ -59,10 +61,15 @@ impl Model {
     pub fn speed(&self) -> Option<f64> {
         self.timescale.as_ref().and_then(|t| t.median_output_speed)
     }
+
+    /// Returns the human-readable identifier (slug) or falls back to id.
+    pub fn display_id(&self) -> &str {
+        self.slug.as_deref().unwrap_or(&self.id)
+    }
 }
 
 pub fn fetch() -> Result<Vec<Model>> {
-    let html = rsc::fetch_html(HOMEPAGE)?;
+    let html = rsc::fetch_text_retry(HOMEPAGE)?;
     parse(&html)
 }
 
@@ -70,9 +77,11 @@ pub fn parse(html: &str) -> Result<Vec<Model>> {
     let stream = rsc::extract_stream(html)?;
     let mut out = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    let mut parse_failures = 0u32;
 
-    for span in rsc::innermost_objects_with(&stream, "\"intelligence_index\":") {
+    for span in rsc::innermost_objects_with(&stream, "\"intelligenceIndex\":") {
         let Ok(model) = serde_json::from_str::<Model>(span) else {
+            parse_failures += 1;
             continue;
         };
         if model.id.is_empty() || !seen.insert(model.id.clone()) {
@@ -81,6 +90,9 @@ pub fn parse(html: &str) -> Result<Vec<Model>> {
         out.push(model);
     }
 
+    if parse_failures > 0 {
+        eprintln!("warning: {parse_failures} model(s) failed to parse from artificialanalysis.ai");
+    }
     if out.is_empty() {
         return Err(anyhow!("no model records found in artificialanalysis.ai"));
     }
@@ -109,10 +121,10 @@ mod tests {
             "expected >=2 models, got {}",
             models.len()
         );
-        assert!(models.iter().any(|m| m.id == "claude-sonnet-4"));
+        assert!(models.iter().any(|m| m.display_id() == "claude-sonnet-4"));
         let claude = models
             .iter()
-            .find(|m| m.id == "claude-sonnet-4")
+            .find(|m| m.display_id() == "claude-sonnet-4")
             .expect("fixture should include Claude");
         assert_eq!(claude.provider_color(), Some("#cc785c"));
     }

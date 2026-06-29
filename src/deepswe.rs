@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 
 use crate::rsc;
 
-const DEEPSWE_URL: &str = "https://deepswe.datacurve.ai/artifacts/leaderboard-live.json";
+const DEEPSWE_URL: &str = "https://deepswe.datacurve.ai/artifacts/v1.1/leaderboard-live.json";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Row {
@@ -55,7 +57,7 @@ impl Row {
 }
 
 pub fn fetch() -> Result<Vec<Row>> {
-    let json = rsc::fetch_html(DEEPSWE_URL)?;
+    let json = rsc::fetch_text_retry(DEEPSWE_URL)?;
     parse(&json)
 }
 
@@ -70,24 +72,28 @@ pub fn parse(json: &str) -> Result<Vec<Row>> {
 
 /// Keep only the best (highest pass_rate) config per model.
 fn best_per_model(rows: Vec<Row>) -> Vec<Row> {
-    use std::collections::HashMap;
     let mut best: HashMap<String, Row> = HashMap::new();
     for row in rows {
-        let key = row.model.clone();
-        match best.get(&key) {
-            Some(existing) if existing.pass_rate >= row.pass_rate => {}
-            _ => {
-                best.insert(key, row);
-            }
+        let dominated = best.get(&row.model).is_some_and(|existing| {
+            cmp_pass_rate(row.pass_rate, existing.pass_rate) != std::cmp::Ordering::Greater
+        });
+        if !dominated {
+            best.insert(row.model.clone(), row);
         }
     }
     let mut out: Vec<Row> = best.into_values().collect();
-    out.sort_by(|a, b| {
-        let av = a.pass_rate.unwrap_or(0.0);
-        let bv = b.pass_rate.unwrap_or(0.0);
-        bv.partial_cmp(&av).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    out.sort_by(|a, b| cmp_pass_rate(a.pass_rate, b.pass_rate));
     out
+}
+
+/// Compare pass_rates: higher is better. None sorts last.
+fn cmp_pass_rate(a: Option<f64>, b: Option<f64>) -> std::cmp::Ordering {
+    match (a, b) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
 }
 
 #[cfg(test)]
@@ -112,6 +118,24 @@ mod tests {
         let json = std::fs::read_to_string(&path).expect("fixture read");
         let rows = parse(&json).expect("parse");
         assert!(rows.len() >= 5, "expected >=5 rows, got {}", rows.len());
+    }
+
+    #[test]
+    fn parses_committed_fixture() {
+        let json = include_str!("../tests/fixtures/deepswe_leaderboard.json");
+        let rows = parse(json).expect("parse committed fixture");
+        assert!(rows.len() >= 3, "expected >=3 rows, got {}", rows.len());
+        // best_per_model keeps highest pass_rate per model
+        let claude = rows.iter().find(|r| r.model == "claude-fable-5").unwrap();
+        assert!(
+            claude.pass_rate.unwrap() > 0.69,
+            "should keep xhigh config (highest pass_rate)"
+        );
+        assert_eq!(
+            claude.reasoning_effort.as_deref(),
+            Some("xhigh"),
+            "should keep xhigh effort"
+        );
     }
 
     #[test]

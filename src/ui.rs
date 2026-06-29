@@ -315,6 +315,7 @@ pub(crate) fn accent_color_for_provider(provider: &str) -> Option<Color> {
         "perplexity" => Color::Rgb(0x1b, 0x81, 0x8e),
         "cohere" => Color::Rgb(0x39, 0x60, 0x99),
         "xaiinc" => Color::Rgb(0x73, 0x6c, 0xd3),
+        "xiaomi" | "mimo" => Color::Rgb(0xff, 0x69, 0x00),
         _ => return None,
     };
     Some(readable_color_for_dark_bg(color))
@@ -405,6 +406,26 @@ pub(crate) fn format_compact(n: u64) -> String {
     }
 }
 
+pub(crate) fn fmt_duration(v: Option<f64>) -> String {
+    let Some(seconds) = v else {
+        return "-".into();
+    };
+    if seconds >= 3600.0 {
+        format!("{:.1}h", seconds / 3600.0)
+    } else if seconds >= 60.0 {
+        format!("{:.1}m", seconds / 60.0)
+    } else {
+        format!("{seconds:.0}s")
+    }
+}
+
+pub(crate) fn fmt_compact_f(v: Option<f64>) -> String {
+    match v {
+        Some(x) if x.is_finite() && x >= 0.0 => format_compact(x.round() as u64),
+        Some(_) | None => "-".into(),
+    }
+}
+
 pub(crate) fn score_color(v: Option<f64>, low: f64, high: f64) -> Style {
     let Some(x) = v else {
         return Style::default().fg(Color::DarkGray);
@@ -435,7 +456,7 @@ pub(crate) fn price_color(v: Option<f64>, low: f64, high: f64) -> Style {
 
 /// Highlight matching tokens in text. Returns a Line with highlighted matches.
 pub(crate) fn highlight_matches(text: &str, tokens: &[String], base_style: Style) -> Line<'static> {
-    if tokens.is_empty() {
+    if tokens.is_empty() || tokens.iter().all(|t| t.is_empty()) {
         return Line::styled(text.to_string(), base_style);
     }
     let lower = text.to_lowercase();

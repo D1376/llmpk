@@ -11,9 +11,9 @@ pub fn filter_tokens(query: &str) -> Vec<String> {
     query.split_whitespace().map(str::to_lowercase).collect()
 }
 
-/// Check if a lowercase token appears in any of the provided field values.
-fn token_in_fields(token: &str, fields: &[&str]) -> bool {
-    fields.iter().any(|f| f.to_lowercase().contains(token))
+/// Check if a lowercase token appears in any of the provided (already-lowered) field values.
+fn token_in_lowered_fields(token: &str, lowered_fields: &[String]) -> bool {
+    lowered_fields.iter().any(|f| f.contains(token))
 }
 
 pub fn aa_matches_filter(model: &aa::Model, tokens: &[String]) -> bool {
@@ -22,18 +22,23 @@ pub fn aa_matches_filter(model: &aa::Model, tokens: &[String]) -> bool {
         Some(false) => "closed proprietary",
         None => "",
     };
-    let fields = [
-        model.id.as_str(),
+    let lowered: Vec<String> = [
+        model.display_id(),
         model.name.as_str(),
         model.provider(),
         model.release_date.as_deref().unwrap_or(""),
         weights,
-    ];
-    tokens.iter().all(|token| token_in_fields(token, &fields))
+    ]
+    .iter()
+    .map(|f| f.to_lowercase())
+    .collect();
+    tokens
+        .iter()
+        .all(|token| token_in_lowered_fields(token, &lowered))
 }
 
 pub fn agent_matches_filter(row: &coding_agents::AgentRow, tokens: &[String]) -> bool {
-    let fields = [
+    let lowered: Vec<String> = [
         row.id.as_str(),
         row.agent_name.as_str(),
         row.agent(),
@@ -43,8 +48,13 @@ pub fn agent_matches_filter(row: &coding_agents::AgentRow, tokens: &[String]) ->
         row.model_name.as_deref().unwrap_or(""),
         row.host_model_slug.as_deref().unwrap_or(""),
         row.release_date.as_deref().unwrap_or(""),
-    ];
-    tokens.iter().all(|token| token_in_fields(token, &fields))
+    ]
+    .iter()
+    .map(|f| f.to_lowercase())
+    .collect();
+    tokens
+        .iter()
+        .all(|token| token_in_lowered_fields(token, &lowered))
 }
 
 pub(super) fn count_matching_aa(models: &[aa::Model], query: &str) -> usize {
@@ -70,12 +80,17 @@ pub(super) fn count_matching_agents(rows: &[coding_agents::AgentRow], query: &st
 
 pub fn deepswe_matches_filter(row: &deepswe::Row, tokens: &[String]) -> bool {
     let display = row.display_model();
-    let fields = [
+    let lowered: Vec<String> = [
         row.model.as_str(),
         display.as_str(),
         row.reasoning_effort.as_deref().unwrap_or(""),
-    ];
-    tokens.iter().all(|token| token_in_fields(token, &fields))
+    ]
+    .iter()
+    .map(|f| f.to_lowercase())
+    .collect();
+    tokens
+        .iter()
+        .all(|token| token_in_lowered_fields(token, &lowered))
 }
 
 pub(super) fn count_matching_deepswe(rows: &[deepswe::Row], query: &str) -> usize {

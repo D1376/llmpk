@@ -306,6 +306,29 @@ pub(super) fn render_header(frame: &mut Frame, area: Rect, app: &AppState) {
         segments.push(f);
     }
 
+    // Copy feedback — show "Copied!" for 2 seconds after clipboard copy.
+    let copy_segment = app
+        .copy_feedback_at
+        .filter(|t| t.elapsed().as_secs() < 2)
+        .map(|_| {
+            let label = "Copied!";
+            (
+                vec![
+                    Span::raw("  |  "),
+                    Span::styled(
+                        label,
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ],
+                6 + label.len(),
+            )
+        });
+    if let Some(c) = copy_segment {
+        segments.push(c);
+    }
+
     // Compute available width (area minus borders).
     let avail = area.width.saturating_sub(2) as usize;
     // Drop lowest-priority segments until it fits.
@@ -384,7 +407,7 @@ pub(super) fn render_error(frame: &mut Frame, area: Rect, error: &str) {
     let inner = centered_rect(area, 52, 9);
     frame.render_widget(ratatui::widgets::Clear, inner);
 
-    let max = inner.width.saturating_sub(4) as usize;
+    let max = inner.width.saturating_sub(4).max(8) as usize;
     let lines = vec![
         Line::from(""),
         Line::from(vec![

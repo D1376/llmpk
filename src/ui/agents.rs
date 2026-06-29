@@ -8,9 +8,9 @@ use ratatui::{
 
 use super::chart::{chart_capacity, render_metric_chart, ChartPreference, ChartRow};
 use super::{
-    accent_color_for_provider, agent_metric, color_for_seed, detail_line, fmt_f, fmt_price,
-    header_cell, highlight_matches, price_color, push_unique, score_color, selected_row_style,
-    truncate, AgentKey, AppState,
+    accent_color_for_provider, agent_metric, color_for_seed, detail_line, fmt_compact_f,
+    fmt_duration, fmt_f, fmt_price, header_cell, highlight_matches, price_color, push_unique,
+    score_color, selected_row_style, truncate, AgentKey, AppState,
 };
 use crate::board::Board;
 use crate::coding_agents;
@@ -400,64 +400,15 @@ fn fmt_pct(v: Option<f64>, decimals: usize) -> String {
     }
 }
 
-fn fmt_duration(v: Option<f64>) -> String {
-    let Some(seconds) = v else {
-        return "-".into();
-    };
-    if seconds >= 3600.0 {
-        format!("{:.1}h", seconds / 3600.0)
-    } else if seconds >= 60.0 {
-        format!("{:.1}m", seconds / 60.0)
-    } else {
-        format!("{seconds:.0}s")
-    }
-}
-
-fn fmt_compact_f(v: Option<f64>) -> String {
-    match v {
-        Some(x) if x.is_finite() && x >= 0.0 => super::format_compact(x.round() as u64),
-        Some(_) | None => "-".into(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding_agents;
-
-    fn make_agent_row(id: &str, agent: &str, provider: &str) -> coding_agents::AgentRow {
-        coding_agents::AgentRow {
-            id: id.to_string(),
-            agent_name: agent.to_string(),
-            provider: Some(provider.to_string()),
-            host_name: Some(provider.to_string()),
-            host_short_name: Some(provider.to_string()),
-            model_name: Some(format!("{provider} Model")),
-            host_model_slug: Some(format!("{}_model", provider.to_lowercase())),
-            display_label: Some(format!("{agent} - {provider} Model")),
-            release_date: Some("2026-01-01".to_string()),
-            index_score: Some(0.6),
-            display: coding_agents::AgentDisplay {
-                agent: Some(agent.to_string()),
-                model: Some(format!("{provider} Model")),
-                creator: Some(coding_agents::AgentCreator {
-                    model: Some(provider.to_string()),
-                }),
-            },
-            mean: coding_agents::AgentMean {
-                reward: Some(0.55),
-                cost_usd: Some(1.25),
-                agent_wall_time_sec: Some(420.0),
-                steps: Some(42.0),
-                total_tokens: Some(1_500_000.0),
-            },
-        }
-    }
+    use crate::ui::test_helpers::agent_row;
 
     #[test]
     fn claude_code_agent_uses_configured_color() {
-        let claude = make_agent_row("opaque-id", "Claude Code", "Anthropic");
-        let codex = make_agent_row("codex", "Codex", "OpenAI");
+        let claude = agent_row("opaque-id", "Claude Code", "Anthropic");
+        let codex = agent_row("codex", "Codex", "OpenAI");
 
         assert_eq!(agent_brand_color(&claude), Some(CLAUDE_CODE_COLOR));
         assert_ne!(agent_brand_color(&codex), Some(CLAUDE_CODE_COLOR));
@@ -465,8 +416,8 @@ mod tests {
 
     #[test]
     fn codex_agent_uses_configured_color() {
-        let codex = make_agent_row("opaque-id", "Codex", "OpenAI");
-        let claude = make_agent_row("claude-code", "Claude Code", "Anthropic");
+        let codex = agent_row("opaque-id", "Codex", "OpenAI");
+        let claude = agent_row("claude-code", "Claude Code", "Anthropic");
 
         assert_eq!(agent_brand_color(&codex), Some(CODEX_COLOR));
         assert_ne!(agent_brand_color(&claude), Some(CODEX_COLOR));
@@ -474,8 +425,8 @@ mod tests {
 
     #[test]
     fn gemini_agent_uses_google_blue() {
-        let gemini = make_agent_row("opaque-id", "Gemini CLI", "Google");
-        let cursor = make_agent_row("cursor", "Cursor CLI", "Anysphere");
+        let gemini = agent_row("opaque-id", "Gemini CLI", "Google");
+        let cursor = agent_row("cursor", "Cursor CLI", "Anysphere");
 
         assert_eq!(agent_brand_color(&gemini), Some(GEMINI_COLOR));
         assert_ne!(agent_brand_color(&cursor), Some(GEMINI_COLOR));
@@ -483,7 +434,7 @@ mod tests {
 
     #[test]
     fn unconfigured_agents_use_neutral_name_style() {
-        let cursor = make_agent_row("cursor", "Cursor CLI", "Anysphere");
+        let cursor = agent_row("cursor", "Cursor CLI", "Anysphere");
 
         assert_eq!(agent_brand_color(&cursor), None);
         assert_eq!(agent_name_style(&cursor).fg, None);

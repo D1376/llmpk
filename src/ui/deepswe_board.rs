@@ -8,8 +8,9 @@ use ratatui::{
 
 use super::chart::{chart_capacity, render_metric_chart, ChartPreference, ChartRow};
 use super::{
-    deepswe_metric, detail_line, fmt_f, fmt_price, header_cell, highlight_matches, price_color,
-    push_unique, score_color, selected_row_style, truncate, AppState, DeepSweKey,
+    accent_color_for_provider, color_for_seed, deepswe_metric, detail_line, fmt_compact_f,
+    fmt_duration, fmt_f, fmt_price, header_cell, highlight_matches, price_color, push_unique,
+    score_color, selected_row_style, truncate, AppState, DeepSweKey,
 };
 use crate::board::Board;
 use crate::deepswe;
@@ -276,30 +277,35 @@ pub(super) fn render_deepswe_detail(frame: &mut Frame, area: Rect, row: Option<&
 
 fn deepswe_model_color(row: &deepswe::Row) -> Color {
     let lower = row.model.to_lowercase();
-    if lower.contains("claude") {
-        Color::Rgb(0xcc, 0x78, 0x5c)
-    } else if lower.contains("gpt") || lower.contains("openai") {
-        Color::Rgb(0x80, 0x80, 0x80)
-    } else if lower.contains("gemini") {
-        Color::Rgb(0x42, 0x85, 0xf4)
-    } else if lower.contains("deepseek") {
-        Color::Rgb(0x22, 0x43, 0xe6)
-    } else if lower.contains("kimi") || lower.contains("moonshot") {
-        Color::Rgb(0x04, 0x7a, 0xfe)
-    } else if lower.contains("grok") {
-        Color::Rgb(0x73, 0x6c, 0xd3)
-    } else if lower.contains("glm") || lower.contains("zhipu") {
-        Color::Rgb(0x1c, 0x7f, 0xf8)
-    } else if lower.contains("qwen") || lower.contains("alibaba") {
-        Color::Rgb(0xff, 0x70, 0x18)
-    } else if lower.contains("mimo") || lower.contains("xiaomi") {
-        Color::Rgb(0xff, 0x69, 0x00)
-    } else if lower.contains("minimax") {
-        Color::Rgb(0xeb, 0x35, 0x68)
+    let provider = MODEL_PROVIDER_HINTS
+        .iter()
+        .find(|(keyword, _)| lower.contains(keyword))
+        .map(|(_, provider)| *provider);
+    if let Some(p) = provider {
+        accent_color_for_provider(p).unwrap_or_else(|| color_for_seed(&row.model))
     } else {
-        super::color_for_seed(&row.model)
+        color_for_seed(&row.model)
     }
 }
+
+/// Maps model-name keywords to provider names for color lookup.
+const MODEL_PROVIDER_HINTS: &[(&str, &str)] = &[
+    ("claude", "anthropic"),
+    ("gpt", "openai"),
+    ("openai", "openai"),
+    ("gemini", "google"),
+    ("deepseek", "deepseek"),
+    ("kimi", "moonshot"),
+    ("moonshot", "moonshot"),
+    ("grok", "xai"),
+    ("glm", "zhipu"),
+    ("zhipu", "zhipu"),
+    ("qwen", "alibaba"),
+    ("alibaba", "alibaba"),
+    ("mimo", "xiaomi"),
+    ("xiaomi", "xiaomi"),
+    ("minimax", "minimax"),
+];
 
 fn deepswe_chart_preference(key: DeepSweKey) -> ChartPreference {
     match key {
@@ -332,25 +338,5 @@ fn fmt_pct(v: Option<f64>) -> String {
     match v {
         Some(x) => format!("{:.0}%", x * 100.0),
         None => "-".into(),
-    }
-}
-
-fn fmt_duration(v: Option<f64>) -> String {
-    let Some(seconds) = v else {
-        return "-".into();
-    };
-    if seconds >= 3600.0 {
-        format!("{:.1}h", seconds / 3600.0)
-    } else if seconds >= 60.0 {
-        format!("{:.0}m", seconds / 60.0)
-    } else {
-        format!("{seconds:.0}s")
-    }
-}
-
-fn fmt_compact_f(v: Option<f64>) -> String {
-    match v {
-        Some(x) if x.is_finite() && x >= 0.0 => super::format_compact(x.round() as u64),
-        Some(_) | None => "-".into(),
     }
 }
